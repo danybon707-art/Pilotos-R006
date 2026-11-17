@@ -51,14 +51,12 @@ var PHASES = {
   antes: { name: 'Antes de la visita', icon: '📋', desc: 'Datos generales, metodología y qué se va a medir', views: [
     { s: 's1', t: '1 · Datos generales' },
     { s: 's2', t: '2 · Metodología de evaluación', note: 'Defina cómo se comprobará el desempeño de la prueba y cuál será el punto de comparación.' },
-    { s: 's7', m: 'plan', t: '6 · KPI y resultados: qué se va a medir', note: 'Defina los KPI y resultados con su meta. En campo solo se anotará el valor obtenido.' },
-    { s: 's5', m: 'plan', t: '5 · Parámetros a controlar', note: 'Liste las condiciones que influyen en la prueba (temperatura, pH, Brix, presión, tiempo…). En campo solo se anotará el valor.' }
+    { s: 'med', m: 'plan', t: '5–6 · Qué se va a medir', note: 'Liste los parámetros a controlar y los KPI o resultados con su meta. En campo solo se anotará el valor de cada uno.' }
   ]},
   campo: { name: 'En campo', icon: '🏭', desc: 'Procedimiento, insumos, mediciones, resultados, dificultades y fotos', views: [
     { s: 's3', t: '3 · Procedimiento realizado', note: 'Etapas principales en el orden en que se ejecutaron.' },
     { s: 's4', t: '4 · Recursos e insumos', note: 'Materias primas, materiales, reactivos, equipos, servicios. Si hay formulación, inclúyala aquí.' },
-    { s: 's5', m: 'campo', t: '5 · Condiciones y parámetros: valores', note: 'Anote el valor o rango medido de cada parámetro.' },
-    { s: 's7', m: 'campo', t: '6 · KPI y resultados: valores obtenidos', note: 'Anote el resultado (con unidad) y marque si cumple la meta.' },
+    { s: 'med', m: 'campo', t: '5–6 · Mediciones y resultados', note: 'Anote el valor de cada parámetro y el resultado de cada KPI (con unidad).' },
     { s: 's8', t: '7 · Riesgos, dificultades y mejoras' },
     { s: 'fotos', t: 'Fotos de la visita', note: 'Displays, hojas de laboratorio, bitácora, equipo. Se agregan solas como anexos y en una hoja del Excel.' }
   ]},
@@ -170,6 +168,7 @@ function viewChecks(p, d, vw, chk) {
   if (s === 's11') return fields(F11);
   if (s === 's10') { if (p.gate === 'no') return; return fields(F10); }
   if (s === 'fotos') return;
+  if (s === 'med') { viewChecks(p, d, { s: 's5', m: vw.m }, chk); viewChecks(p, d, { s: 's7', m: vw.m }, chk); return; }
   if (COLS[s]) {
     var rows = sd.rows || [];
     if (s === 's13' && (p.fotos || []).length) { if (!rows.length) return; }
@@ -193,9 +192,7 @@ function viewChecks(p, d, vw, chk) {
   }
   if (s === 's9') {
     chk(!!p.gate, '¿La prueba es favorable y se autoriza avanzar?');
-    CRIT9.forEach(function (q, i) { chk(!blank((sd.crit || [])[i]), q); });
-    chk(!blank(sd.grafico), 'Comparación línea base vs. resultados');
-    chk(!blank(sd.conclusion), 'Conclusión y recomendación');
+    CRIT9.forEach(function (q, i) { chk(!blank((sd.crit || [])[i]) || (i === 2 && !!autoCrit2(p)), q); });
     return;
   }
   if (s === 's12') {
@@ -225,11 +222,75 @@ function fillBlanks(p, val) {
   FIXED8.forEach(function (a) { var x = s8.fixed[a.k] = s8.fixed[a.k] || {}; ['sit', 'accion', 'resp'].forEach(function (c) { fill(x, c); }); });
   (s8.otros || []).forEach(function (r) { ['sit', 'accion', 'resp'].forEach(function (c) { fill(r, c); }); });
   var s9 = d.s9 = d.s9 || {};
-  fill(s9, 'grafico'); fill(s9, 'conclusion');
   if (val === 'No aplica') { s9.crit = s9.crit || []; CRIT9.forEach(function (q, i) { if (blank(s9.crit[i])) { s9.crit[i] = 'No aplica'; n++; } }); }
   var s12 = d.s12 = d.s12 || {};
   ROLES.forEach(function (r) { var x = s12[r[0]] = s12[r[0]] || {}; fill(x, 'nombre'); fill(x, 'fecha'); });
   return n;
+}
+
+/* ---------- Redacción automática (sin IA: arma el texto con los datos registrados) ---------- */
+function real(v) { return !blank(v) && STD.indexOf(String(v).trim()) < 0; }
+function kpiRows(p) { var s7 = p.data.s7 || {}; return s7.na ? [] : (s7.rows || []).filter(function (r) { return real(r.kpi); }); }
+var EST = { 'Sí': 'cumple', 'Parcial': 'cumple parcialmente', 'No': 'no cumple' };
+function kpiResumen(rows) {
+  var n = rows.length, si = 0, par = 0, no = 0;
+  rows.forEach(function (r) { if (r.cumple === 'Sí') si++; else if (r.cumple === 'Parcial') par++; else if (r.cumple === 'No') no++; });
+  if (!n) return '';
+  var t = si + ' de ' + n + ' KPI ' + (si === 1 ? 'cumple' : 'cumplen') + ' la meta';
+  if (par) t += ', ' + par + ' parcialmente';
+  if (no) t += (par ? ' y ' : ', ') + no + (no === 1 ? ' no la cumple' : ' no la cumplen');
+  var sin = n - si - par - no; if (sin) t += ' (' + sin + ' sin evaluar)';
+  return t + '.';
+}
+function autoCrit2(p) {
+  var rows = kpiRows(p).filter(function (r) { return EST[r.cumple]; });
+  if (!rows.length) return '';
+  if (rows.every(function (r) { return r.cumple === 'Sí'; })) return 'Sí';
+  if (rows.every(function (r) { return r.cumple === 'No'; })) return 'No';
+  return 'Parcialmente o requiere ajustes';
+}
+function autoComparacion(p) {
+  var d = p.data, lb = get(d, 's2.lineaBase'), rows = kpiRows(p), out = [];
+  if (real(lb)) out.push('Línea base: ' + String(lb).trim().replace(/\.$/, '') + '.');
+  if (rows.length) {
+    out.push('Resultados obtenidos frente a la meta:');
+    rows.forEach(function (r) {
+      out.push('• ' + r.kpi.trim() + ': meta ' + (real(r.meta) ? r.meta.trim() : 'no definida') + '; resultado ' + (real(r.resultado) ? r.resultado.trim() : 'no registrado') + ' (' + (EST[r.cumple] || 'sin evaluar') + ').');
+    });
+    out.push(kpiResumen(rows));
+  } else out.push('No se registraron KPI para comparar con la línea base.');
+  var s5 = d.s5 || {}, par = s5.na ? [] : (s5.rows || []).filter(function (r) { return real(r.parametro) && real(r.valor); });
+  if (par.length) out.push('Condiciones registradas: ' + par.map(function (r) { return r.parametro.trim() + ' ' + r.valor.trim(); }).join('; ') + '.');
+  return out.join('\n');
+}
+function autoConclusion(p) {
+  var d = p.data, c = (get(d, 's9.crit') || []).slice(), out = [];
+  if (blank(c[2])) c[2] = autoCrit2(p);
+  var ej = { 'Sí': 'La prueba se ejecutó según lo previsto', 'Parcialmente o requiere ajustes': 'La prueba se ejecutó con ajustes respecto a lo previsto', 'No': 'La prueba no pudo ejecutarse según lo previsto' }[c[0]];
+  var re = { 'Sí': 'se obtuvo el resultado esperado', 'Parcialmente o requiere ajustes': 'el resultado esperado se obtuvo de forma parcial', 'No': 'no se obtuvo el resultado esperado' }[c[1]];
+  if (ej && re) out.push(ej + ' y ' + re + '.'); else if (ej) out.push(ej + '.'); else if (re) out.push(re.charAt(0).toUpperCase() + re.slice(1) + '.');
+  var kr = kpiResumen(kpiRows(p)); if (kr) out.push('En cuanto a los indicadores, ' + kr.charAt(0).toLowerCase() + kr.slice(1));
+  var fx = get(d, 's8.fixed') || {}, prob = [], mej = [];
+  FIXED8.forEach(function (a) {
+    var x = fx[a.k] || {}; if (!real(x.sit)) return;
+    var lbl = { dificultades: 'dificultades', faltante: 'equipo o recurso faltante', riesgo: 'riesgo', mejora: 'mejora al proceso', pendiente: 'información pendiente', oportunidad: 'oportunidad' }[a.k] || a.label.toLowerCase();
+    var sit = x.sit.trim().replace(/\.$/, ''); sit = sit.charAt(0).toLowerCase() + sit.slice(1);
+    var t = lbl + ': ' + sit;
+    if (a.k === 'mejora' || a.k === 'oportunidad') mej.push(t + (real(x.accion) ? ' (propuesta: ' + x.accion.trim().replace(/\.$/, '') + ')' : ''));
+    else prob.push(t);
+  });
+  (get(d, 's8.otros') || []).forEach(function (o) { if (real(o.sit)) prob.push((real(o.aspecto) ? o.aspecto.trim().toLowerCase() + ': ' : '') + o.sit.trim().replace(/\.$/, '')); });
+  if (prob.length) out.push('Durante la prueba se identificaron ' + prob.join('; ') + '.');
+  if (mej.length) out.push('Como mejoras u oportunidades: ' + mej.join('; ') + '.');
+  var rec;
+  if (c[3] === 'Sí') rec = 'Se recomienda continuar con la iniciativa' + (p.gate === 'favorable' ? ' y avanzar hacia la implementación' + (real(get(d, 's10.decision')) && get(d, 's10.decision') !== 'Implementar' ? ' (' + get(d, 's10.decision').toLowerCase() + ')' : '') : '') + '.';
+  else if (c[3] === 'Parcialmente o requiere ajustes') rec = 'Se recomienda continuar con la iniciativa, aplicando los ajustes identificados antes de implementarla.';
+  else if (c[3] === 'No') rec = 'No se recomienda continuar con la iniciativa en las condiciones evaluadas.';
+  else if (p.gate === 'no') rec = 'La prueba no se considera favorable; no se recomienda avanzar a la implementación en las condiciones actuales.';
+  else if (p.gate === 'favorable') rec = 'La prueba se considera favorable y se recomienda avanzar hacia la implementación.';
+  if (rec) out.push(rec);
+  if (c[4] === 'Sí') out.push('Se requiere la validación de un experto técnico antes de implementar.');
+  return out.join(' ') || 'Complete la evaluación (criterios y KPI) para redactar la conclusión.';
 }
 
 /* ---------- Navegación (con el botón "atrás" del celular) ---------- */
@@ -369,8 +430,9 @@ function fieldBlock(sk, f, sd) {
 
 function tableView(p, s, mode) {
   var d = p.data, sd = d[s] = d[s] || {}, rows = sd.rows || [], h = '';
+  if (sd.na && mode === 'campo') return '<p class="muted">No aplica (definido antes de la visita).</p>';
   if (sd.na) {
-    return '<label class="nacheck"><input type="checkbox" data-na="' + s + '" checked> Esta sección no aplica</label><div class="empty">Sección marcada como "No aplica". En el Excel aparecerá así.</div>';
+    return '<label class="nacheck"><input type="checkbox" data-na="' + s + '" checked> ' + ({ s5: 'No hay parámetros que controlar', s7: 'No hay KPI ni resultados que medir' }[s] || 'Esta sección no aplica') + '</label><p class="muted">En el Excel aparecerá como "No aplica".</p>';
   }
   if (s === 's13' && (p.fotos || []).length) h += '<div class="banner info">Las ' + p.fotos.length + ' foto(s) de la app se agregan solas como anexos. Aquí solo agregue otras evidencias.</div>';
   if (mode === 'campo' && !rows.length) {
@@ -378,7 +440,7 @@ function tableView(p, s, mode) {
   }
   rows.forEach(function (r, i) {
     var known = mode === 'campo' && COLS[s].filter(function (c) { return c.plan; }).every(function (c) { return !blank(r[c.k]); });
-    h += '<div class="rowcard"><div class="rh"><span>' + ROWNAME[s] + ' ' + (i + 1) + '</span><span class="ops">' +
+    h += '<div class="rowcard" data-s="' + s + '"><div class="rh"><span>' + ROWNAME[s] + ' ' + (i + 1) + '</span><span class="ops">' +
       (s === 's3' && i > 0 ? '<button class="iconb" data-up="' + i + '" data-s="' + s + '" aria-label="Subir">↑</button>' : '') +
       '<button class="iconb" data-rowna="' + i + '" data-s="' + s + '" title="Vacíos → No aplica">NA</button>' +
       '<button class="iconb" data-delrow="' + i + '" data-s="' + s + '" aria-label="Eliminar">🗑</button></span></div><div class="rb">';
@@ -393,7 +455,7 @@ function tableView(p, s, mode) {
   });
   var addLabel = { s3: '+ Agregar etapa', s4: '+ Agregar recurso o insumo', s5: mode === 'campo' ? '+ Agregar parámetro no previsto' : '+ Agregar parámetro', s7: mode === 'campo' ? '+ Agregar resultado no previsto' : '+ Agregar KPI o resultado', s13: '+ Agregar anexo' }[s];
   h += '<button class="btn block sky" data-addrow="' + s + '">' + addLabel + '</button>';
-  if (mode !== 'campo') h += '<label class="nacheck" style="margin-top:12px"><input type="checkbox" data-na="' + s + '"> Esta sección no aplica</label>';
+  if (mode !== 'campo') h += '<label class="nacheck" style="margin-top:12px"><input type="checkbox" data-na="' + s + '"> ' + ({ s5: 'No hay parámetros que controlar', s7: 'No hay KPI ni resultados que medir' }[s] || 'Esta sección no aplica') + '</label>';
   if (s === 's4') h += '<p class="note">Complete el porcentaje solo cuando corresponda y con una misma base de unidades. <button class="chip" data-act="pct">Calcular % automáticamente</button></p>';
   return h;
 }
@@ -420,9 +482,14 @@ function s9View(p) {
   var sd = p.data.s9 = p.data.s9 || {}, h = '';
   h += '<div class="gate"><b>¿La prueba es favorable y se autoriza avanzar hacia la implementación?</b>' +
     '<div class="seg"><button class="' + (p.gate === 'favorable' ? 'sel si' : '') + '" data-gate="favorable">Sí → se llena la secc. 9</button><button class="' + (p.gate === 'no' ? 'sel no' : '') + '" data-gate="no">No → secc. 9 "No aplica"</button></div></div>';
-  CRIT9.forEach(function (q, i) { h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, (sd.crit || [])[i]) + '</div>'; });
-  h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Descríbala o indique el anexo con el gráfico.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area' }) + chips('s9.grafico', sd.grafico) + '</div>';
-  h += '<div class="f"><label>Conclusión y recomendación</label>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 4 }) + chips('s9.conclusion', sd.conclusion) + '</div>';
+  CRIT9.forEach(function (q, i) {
+    var val = (sd.crit || [])[i], sug = i === 2 ? autoCrit2(p) : '';
+    h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, val) +
+      (sug && blank(val) ? '<div class="prompt" style="margin-top:6px">Según los KPI registrados: <b>' + esc(sug === 'Parcialmente o requiere ajustes' ? 'Parcial / ajustes' : sug) + '</b> (se usará si no marca otra opción).</div>' : '') + '</div>';
+  });
+  h += '<div class="banner info">✨ La comparación y la conclusión se redactan solas con los datos registrados. Toque <b>Redactar</b> para verlas y ajustarlas. Si las deja vacías, se redactan al generar el Excel.</div>';
+  h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Se arma con la línea base, los KPI (meta, resultado, cumplimiento) y los parámetros.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area', rows: 6 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="grafico">✨ Redactar</button></div></div>';
+  h += '<div class="f"><label>Conclusión y recomendación</label><div class="prompt">Se arma con los criterios, los KPI, las dificultades y mejoras de la secc. 7 y la decisión.</div>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 7 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="conclusion">✨ Redactar</button></div></div>';
   return h;
 }
 function s12View(p) {
@@ -458,6 +525,10 @@ function renderView(p, ph, i) {
     else { if (!p.gate) h += '<div class="banner warn">Primero responda en la secc. 8 si la prueba es favorable.</div>'; var sd10 = d.s10 = d.s10 || {}; F10.forEach(function (f) { h += fieldBlock('s10', f, sd10); }); }
   }
   else if (s === 's11') { var sd11 = d.s11 = d.s11 || {}; F11.forEach(function (f) { h += fieldBlock('s11', f, sd11); }); }
+  else if (s === 'med') {
+    h += '<div class="sub">5 · Condiciones y parámetros</div>' + tableView(p, 's5', vw.m);
+    h += '<div class="sub">6 · KPI y resultados</div>' + tableView(p, 's7', vw.m);
+  }
   else if (COLS[s]) h += tableView(p, s, vw.m);
   else if (s === 's8') h += s8View(p);
   else if (s === 's9') h += s9View(p);
@@ -640,6 +711,11 @@ function makeExcel(p) {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
   var inc = document.getElementById('incFotos'), withPhotos = inc && inc.checked;
   var rec = clone(p.data), fotos = p.fotos || [];
+  rec.s9 = rec.s9 || {};
+  rec.s9.crit = (rec.s9.crit || []).slice();
+  if (blank(rec.s9.crit[2]) && autoCrit2(p)) rec.s9.crit[2] = autoCrit2(p);
+  if (blank(rec.s9.grafico)) rec.s9.grafico = autoComparacion(p);
+  if (blank(rec.s9.conclusion)) rec.s9.conclusion = autoConclusion(p);
   if (p.gate === 'no') rec.s10 = { decision: 'No aplica', cronograma: 'No aplica', kpiDef: 'No aplica', frec: 'No aplica', resp: 'No aplica' };
   if (fotos.length) {
     rec.s13 = rec.s13 || {};
@@ -705,6 +781,12 @@ app.addEventListener('click', function (e) {
     var curV = get(p.data, ds.setp);
     set(p.data, ds.setp, curV === ds.val ? '' : ds.val); save(p); keepScroll(render); return;
   }
+  if (ds.auto) {
+    var key = ds.auto, txt = key === 'grafico' ? autoComparacion(p) : autoConclusion(p);
+    var apply = function () { set(p.data, 's9.' + key, txt); save(p); keepScroll(render); toast('Texto redactado. Revíselo y ajústelo si hace falta.'); };
+    if (!blank(get(p.data, 's9.' + key))) confirmBox('Reemplazar texto', 'Ya hay texto en este campo. ¿Reemplazarlo por la redacción automática?', 'Reemplazar', apply); else apply();
+    return;
+  }
   if (ds.gate) {
     p.gate = p.gate === ds.gate ? '' : ds.gate;
     if (p.gate === 'no') p.data.s10 = { decision: 'No aplica', cronograma: 'No aplica', kpiDef: 'No aplica', frec: 'No aplica', resp: 'No aplica' };
@@ -714,7 +796,7 @@ app.addEventListener('click', function (e) {
   if (ds.addrow) {
     var sd = p.data[ds.addrow] = p.data[ds.addrow] || {}; sd.na = false; sd.rows = sd.rows || []; sd.rows.push({}); save(p);
     keepScroll(render);
-    var cards = app.querySelectorAll('.rowcard'); var last = cards[cards.length - 1];
+    var cards = app.querySelectorAll('.rowcard[data-s="' + ds.addrow + '"]'); var last = cards[cards.length - 1];
     if (last) { last.scrollIntoView({ block: 'center' }); var inp = last.querySelector('.in'); if (inp) inp.focus(); }
     return;
   }
