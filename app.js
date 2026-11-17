@@ -51,12 +51,12 @@ var PHASES = {
   antes: { name: 'Antes de la visita', icon: '📋', desc: 'Datos generales, metodología y qué se va a medir', views: [
     { s: 's1', t: '1 · Datos generales' },
     { s: 's2', t: '2 · Metodología de evaluación', note: 'Defina cómo se comprobará el desempeño de la prueba y cuál será el punto de comparación.' },
-    { s: 'med', m: 'plan', t: '5–6 · Qué se va a medir', note: 'Liste los parámetros a controlar y los KPI o resultados con su meta. En campo solo se anotará el valor de cada uno.' }
+    { s: 's7', m: 'plan', t: '6 · KPI y resultados: qué se va a medir', note: 'Liste los KPI o resultados con su meta. En campo solo se anotará el resultado obtenido.' }
   ]},
   campo: { name: 'En campo', icon: '🏭', desc: 'Procedimiento, insumos, mediciones, resultados, dificultades y fotos', views: [
     { s: 's3', t: '3 · Procedimiento realizado', note: 'Etapas principales en el orden en que se ejecutaron.' },
     { s: 's4', t: '4 · Recursos e insumos', note: 'Materias primas, materiales, reactivos, equipos, servicios. Si hay formulación, inclúyala aquí.' },
-    { s: 'med', m: 'campo', t: '5–6 · Mediciones y resultados', note: 'Anote el valor de cada parámetro y el resultado de cada KPI (con unidad).' },
+    { s: 's7', m: 'campo', t: '6 · KPI y resultados obtenidos', note: 'Anote el resultado de cada KPI (con unidad) y marque si cumple la meta.' },
     { s: 's8', t: '7 · Riesgos, dificultades y mejoras' },
     { s: 'fotos', t: 'Fotos de la visita', note: 'Displays, hojas de laboratorio, bitácora, equipo. Se agregan solas como anexos y en una hoja del Excel.' }
   ]},
@@ -123,6 +123,7 @@ function loadAll() { return tx('pilotos', 'readonly', function (st) { return st.
 var saveTimers = {};
 function save(p, now) {
   p.updatedAt = new Date().toISOString();
+  if (R.ph === 'campo' && R.v === 'view') stampCampo(p);
   clearTimeout(saveTimers[p.id]);
   var run = function () { return tx('pilotos', 'readwrite', function (st) { st.put(p); }).catch(function () { toast('No se pudo guardar en este dispositivo.'); }); };
   if (now) return run();
@@ -139,14 +140,92 @@ function photoUrl(id) {
   return getPhoto(id).then(function (b) { if (!b) return ''; URLS[id] = URL.createObjectURL(b); return URLS[id]; });
 }
 
+/* ---------- Valores automáticos ----------
+   eff(p) devuelve una copia del piloto con todo lo que la app puede deducir sola.
+   Lo que la persona escribe o marca siempre tiene prioridad. */
+var NAME_KEY = 'cor-campo-mi-nombre';
+function myName() { try { return (localStorage.getItem(NAME_KEY) || '').trim(); } catch (e) { return ''; } }
+function setMyName(v) { try { localStorage.setItem(NAME_KEY, v); } catch (e) {} }
+function parseNum(str) {
+  var m = String(str || '').match(/-?\d[\d.,]*/); if (!m) return null;
+  var t = m[0].replace(/[.,]$/, '');
+  if (t.indexOf(',') >= 0 && t.indexOf('.') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  else t = t.replace(',', '.');
+  var n = parseFloat(t); return isNaN(n) ? null : n;
+}
+/* Compara el resultado con la meta: "≤ 0,83", "mínimo 95 %", "entre 7,5 y 8", "> 20"… */
+function evalKpi(meta, res) {
+  if (!real(meta) || !real(res)) return '';
+  var r = parseNum(res); if (r === null) return '';
+  var m = String(meta).toLowerCase();
+  var nums = (m.match(/-?\d[\d.,]*/g) || []).map(parseNum).filter(function (x) { return x !== null; });
+  if (!nums.length) return '';
+  var ok;
+  if (/≤|<=|=<|m[aá]x|menor o igual|hasta|no (mayor|m[aá]s|superior)|como m[aá]ximo/.test(m)) ok = r <= nums[0];
+  else if (/≥|>=|=>|m[ií]n|mayor o igual|al menos|no (menor|inferior)|como m[ií]nimo/.test(m)) ok = r >= nums[0];
+  else if (/<|menor|inferior|reducir a menos/.test(m)) ok = r < nums[0];
+  else if (/>|mayor|superior|m[aá]s de/.test(m)) ok = r > nums[0];
+  else if (nums.length >= 2 && /entre|[–—-]|\sa\s|\sy\s/.test(m)) { var lo = Math.min(nums[0], nums[1]), hi = Math.max(nums[0], nums[1]); ok = r >= lo && r <= hi; }
+  else return '';
+  return ok ? 'Sí' : 'No';
+}
+function kpiAgg(rows) {
+  var ev = rows.filter(function (r) { return EST[r.cumple]; });
+  if (!ev.length) return '';
+  if (ev.every(function (r) { return r.cumple === 'Sí'; })) return 'Sí';
+  if (ev.every(function (r) { return r.cumple === 'No'; })) return 'No';
+  return 'Parcial';
+}
+function samePct(rows) {
+  var used = rows.filter(function (r) { return parseNum(r.cantidad) !== null; });
+  if (used.length < 2) return null;
+  var u = {}; used.forEach(function (r) { u[(r.unidad || '').trim().toLowerCase()] = 1; });
+  if (Object.keys(u).length !== 1) return null;
+  var tot = used.reduce(function (a, r) { return a + parseNum(r.cantidad); }, 0); if (!tot) return null;
+  var out = {}; rows.forEach(function (r, i) { var n = parseNum(r.cantidad); if (n !== null) out[i] = (n / tot * 100).toFixed(1).replace('.', ',') + ' %'; });
+  return out;
+}
+function eff(p) {
+  var E = { id: p.id, fotos: p.fotos || [], campo: p.campo, data: clone(p.data), gate: p.gate || '' };
+  var d = E.data;
+  var s7 = d.s7 = d.s7 || {};
+  if (!s7.na) (s7.rows || []).forEach(function (r) { if (blank(r.cumple)) r.cumple = evalKpi(r.meta, r.resultado); });
+  var s4 = d.s4 = d.s4 || {};
+  if (!s4.na && s4.rows) { var pc = samePct(s4.rows); if (pc) s4.rows.forEach(function (r, i) { if (blank(r.porcentaje) && pc[i]) r.porcentaje = pc[i]; }); }
+  var agg = kpiAgg(s7.na ? [] : (s7.rows || []).filter(function (r) { return real(r.kpi); }));
+  var CR = { 'Sí': 'Sí', 'Parcial': 'Parcialmente o requiere ajustes', 'No': 'No' }[agg];
+  var s9 = d.s9 = d.s9 || {}; s9.crit = (s9.crit || []).slice();
+  if (CR) [1, 2, 3].forEach(function (i) { if (blank(s9.crit[i])) s9.crit[i] = CR; });
+  if (!E.gate && agg) E.gate = agg === 'No' ? 'no' : 'favorable';
+  var s1 = d.s1 = d.s1 || {};
+  if (E.gate === 'no') d.s10 = { decision: 'No aplica', cronograma: 'No aplica', kpiDef: 'No aplica', frec: 'No aplica', resp: 'No aplica' };
+  else {
+    var s10 = d.s10 = d.s10 || {};
+    if (blank(s10.decision) && agg) s10.decision = agg === 'Sí' ? 'Implementar' : agg === 'Parcial' ? 'Implementar con ajustes' : 'Realizar nueva prueba';
+    if (blank(s10.resp) && real(s1.responsable)) s10.resp = s1.responsable;
+  }
+  var s12 = d.s12 = d.s12 || {}, el = s12.elab = s12.elab || {};
+  if (blank(el.nombre) && myName()) el.nombre = myName();
+  if (blank(el.fecha)) el.fecha = today();
+  var cp = p.campo || {};
+  if (blank(s1.inicio) && cp.ini) s1.inicio = cp.ini;
+  if (blank(s1.fin) && cp.fin) s1.fin = cp.fin;
+  return E;
+}
+function stampCampo(p) {
+  var t = today(), c = p.campo = p.campo || {};
+  if (!c.ini || t < c.ini) c.ini = t;
+  if (!c.fin || t > c.fin) c.fin = t;
+}
+
 /* ---------- Revisión de faltantes ---------- */
 function analyze(p) {
-  var d = p.data || {}, out = { total: 0, miss: [], byView: {} };
+  var E = eff(p), d = E.data, out = { total: 0, miss: [], byView: {} };
   PH_ORDER.forEach(function (ph) {
     PHASES[ph].views.forEach(function (vw, i) {
       var key = ph + ':' + i, m = [], tot = 0;
       var chk = function (ok, t) { tot++; if (!ok) m.push(t); };
-      viewChecks(p, d, vw, chk);
+      viewChecks(E, d, vw, chk);
       out.total += tot;
       out.byView[key] = { tot: tot, miss: m.length };
       m.forEach(function (t) { out.miss.push({ ph: ph, i: i, t: t, title: vw.t }); });
@@ -192,7 +271,7 @@ function viewChecks(p, d, vw, chk) {
   }
   if (s === 's9') {
     chk(!!p.gate, '¿La prueba es favorable y se autoriza avanzar?');
-    CRIT9.forEach(function (q, i) { chk(!blank((sd.crit || [])[i]) || (i === 2 && !!autoCrit2(p)), q); });
+    CRIT9.forEach(function (q, i) { chk(!blank((sd.crit || [])[i]), q); });
     return;
   }
   if (s === 's12') {
@@ -201,17 +280,19 @@ function viewChecks(p, d, vw, chk) {
 }
 /* Completa todos los vacíos (salvo decisiones que la persona debe tomar) con un valor estándar */
 function fillBlanks(p, val) {
-  var d = p.data, n = 0;
-  var fill = function (o, k) { if (blank(o[k])) { o[k] = val; n++; } };
-  [['s1', F1], ['s2', F2], ['s11', F11]].concat(p.gate === 'no' ? [] : [['s10', F10]]).forEach(function (x) {
-    var sd = d[x[0]] = d[x[0]] || {};
+  /* Solo completa lo que la app tampoco puede deducir sola (ver eff) */
+  var d = p.data, E = eff(p), ed = E.data, n = 0;
+  var fill = function (o, k, eo) { if (blank(o[k]) && (!eo || blank(eo[k]))) { o[k] = val; n++; } };
+  [['s1', F1], ['s2', F2], ['s11', F11]].concat(E.gate === 'no' ? [] : [['s10', F10]]).forEach(function (x) {
+    var sd = d[x[0]] = d[x[0]] || {}, eo = ed[x[0]] || {};
     x[1].forEach(function (f) {
-      if (f.type === 'range') { fill(sd, 'inicio'); fill(sd, 'fin'); }
-      else if (f.type === 'choice') { if (blank(sd[f.k]) && (val === 'No aplica' || f.options.indexOf(val) >= 0)) { sd[f.k] = val; n++; } }
-      else fill(sd, f.k);
+      if (f.type === 'range') { fill(sd, 'inicio', eo); fill(sd, 'fin', eo); }
+      else if (f.type === 'choice') { if (blank(sd[f.k]) && blank(eo[f.k]) && (val === 'No aplica' || f.options.indexOf(val) >= 0)) { sd[f.k] = val; n++; } }
+      else fill(sd, f.k, eo);
     });
   });
   Object.keys(COLS).forEach(function (s) {
+    if (s === 's5') return; /* la secc. 5 no se captura en la app */
     var sd = d[s] = d[s] || {};
     if (s === 's13' && (p.fotos || []).length && !(sd.rows || []).length) return;
     if (!sd.na && !(sd.rows || []).length) { if (val === 'No aplica') { sd.na = true; n++; } return; }
@@ -221,15 +302,15 @@ function fillBlanks(p, val) {
   var s8 = d.s8 = d.s8 || {}; s8.fixed = s8.fixed || {};
   FIXED8.forEach(function (a) { var x = s8.fixed[a.k] = s8.fixed[a.k] || {}; ['sit', 'accion', 'resp'].forEach(function (c) { fill(x, c); }); });
   (s8.otros || []).forEach(function (r) { ['sit', 'accion', 'resp'].forEach(function (c) { fill(r, c); }); });
-  var s9 = d.s9 = d.s9 || {};
-  if (val === 'No aplica') { s9.crit = s9.crit || []; CRIT9.forEach(function (q, i) { if (blank(s9.crit[i])) { s9.crit[i] = 'No aplica'; n++; } }); }
+  var s9 = d.s9 = d.s9 || {}, ec = get(ed, 's9.crit') || [];
+  if (val === 'No aplica') { s9.crit = s9.crit || []; CRIT9.forEach(function (q, i) { if (blank(s9.crit[i]) && blank(ec[i])) { s9.crit[i] = 'No aplica'; n++; } }); }
   var s12 = d.s12 = d.s12 || {};
-  ROLES.forEach(function (r) { var x = s12[r[0]] = s12[r[0]] || {}; fill(x, 'nombre'); fill(x, 'fecha'); });
+  ROLES.forEach(function (r) { var x = s12[r[0]] = s12[r[0]] || {}, eo = get(ed, 's12.' + r[0]) || {}; fill(x, 'nombre', eo); fill(x, 'fecha', eo); });
   return n;
 }
 
 /* ---------- Redacción automática (sin IA: arma el texto con los datos registrados) ---------- */
-function real(v) { return !blank(v) && STD.indexOf(String(v).trim()) < 0; }
+function real(v) { return !blank(v) && STD.indexOf(String(v).trim()) < 0 && ['Sin novedades', 'Ninguna'].indexOf(String(v).trim()) < 0; }
 function kpiRows(p) { var s7 = p.data.s7 || {}; return s7.na ? [] : (s7.rows || []).filter(function (r) { return real(r.kpi); }); }
 var EST = { 'Sí': 'cumple', 'Parcial': 'cumple parcialmente', 'No': 'no cumple' };
 function kpiResumen(rows) {
@@ -265,7 +346,6 @@ function autoComparacion(p) {
 }
 function autoConclusion(p) {
   var d = p.data, c = (get(d, 's9.crit') || []).slice(), out = [];
-  if (blank(c[2])) c[2] = autoCrit2(p);
   var ej = { 'Sí': 'La prueba se ejecutó según lo previsto', 'Parcialmente o requiere ajustes': 'La prueba se ejecutó con ajustes respecto a lo previsto', 'No': 'La prueba no pudo ejecutarse según lo previsto' }[c[0]];
   var re = { 'Sí': 'se obtuvo el resultado esperado', 'Parcialmente o requiere ajustes': 'el resultado esperado se obtuvo de forma parcial', 'No': 'no se obtuvo el resultado esperado' }[c[1]];
   if (ej && re) out.push(ej + ' y ' + re + '.'); else if (ej) out.push(ej + '.'); else if (re) out.push(re.charAt(0).toUpperCase() + re.slice(1) + '.');
@@ -308,6 +388,7 @@ function go(o, replace) {
   else location.hash = h;
 }
 function route() {
+  document.querySelectorAll('.modal-bg').forEach(function (m) { m.remove(); });
   R = parseHash();
   if (R.p && !PIL[R.p]) R = { v: 'home' };
   render();
@@ -342,6 +423,7 @@ function renderHome() {
   h += '<div class="row" style="margin-bottom:14px"><button class="btn primary" data-act="new">+ Nuevo piloto</button>' +
     '<label class="btn sky filebtn">📥 Abrir piloto recibido<input type="file" accept=".json,application/json" data-import></label></div>';
   if (installEvt) h += '<button class="btn block sky" data-act="install" style="margin-bottom:14px">📲 Instalar en este celular</button>';
+  h += '<div class="card"><div class="f" style="margin:0"><label>Su nombre</label><div class="prompt">Se usa para "Elaborado por" y en el botón 👤 Yo. Se guarda en este celular.</div><input class="in" data-myname value="' + esc(myName()) + '" placeholder="Ej.: Ing. Marta López" autocomplete="off"></div></div>';
   if (!list.length) {
     h += '<div class="empty">Aún no hay pilotos en este celular.<br>Toque <b>+ Nuevo piloto</b> para empezar.</div>';
   } else {
@@ -403,32 +485,39 @@ function inputHtml(path, val, o) {
     var isDate = /^\d{4}-\d{2}-\d{2}$/.test(val);
     return '<input type="date"' + attrs + ' value="' + (isDate ? esc(val) : '') + '">' + (val && !isDate ? '<div class="muted" style="margin-top:4px">Valor: <b>' + esc(val) + '</b></div>' : '');
   }
-  return '<input type="text"' + (o.mode ? ' inputmode="' + o.mode + '"' : '') + attrs + ' value="' + esc(val) + '" autocomplete="off">';
+  return '<input type="text"' + (o.mode ? ' inputmode="' + o.mode + '"' : '') + (o.ph ? ' placeholder="' + esc(o.ph) + '"' : '') + attrs + ' value="' + esc(val) + '" autocomplete="off">';
 }
-function chips(path, val) {
-  return '<div class="chips">' + STD.map(function (s) { return '<button class="chip' + (val === s ? ' sel' : '') + '" data-setp="' + esc(path) + '" data-val="' + esc(s) + '">' + s + '</button>'; }).join('') + '</div>';
+function chips(path, val, withName) {
+  var me = withName && myName() ? '<button class="chip' + (val === myName() ? ' sel' : '') + '" data-setp="' + esc(path) + '" data-val="' + esc(myName()) + '">👤 Yo</button>' : '';
+  return '<div class="chips">' + me + STD.map(function (s) { return '<button class="chip' + (val === s ? ' sel' : '') + '" data-setp="' + esc(path) + '" data-val="' + esc(s) + '">' + s + '</button>'; }).join('') + '</div>';
 }
-function seg(path, options, val, extraStd) {
+function seg(path, options, val, extraStd, autoVal, autoNote) {
   var opts = options.map(function (o) { return Array.isArray(o) ? o : [o, o, '']; });
   if (extraStd) STD.forEach(function (s) { if (!opts.some(function (o) { return o[0] === s; })) opts.push([s, s, '']); });
+  var useAuto = blank(val) && !blank(autoVal);
   return '<div class="seg">' + opts.map(function (o) {
-    return '<button class="' + (val === o[0] ? 'sel ' + o[2] : '') + '" data-setp="' + esc(path) + '" data-val="' + esc(o[0]) + '">' + esc(o[1]) + '</button>';
-  }).join('') + '</div>';
+    var cls = val === o[0] ? 'sel ' + o[2] : (useAuto && autoVal === o[0] ? 'sel auto ' + o[2] : '');
+    return '<button class="' + cls + '" data-setp="' + esc(path) + '" data-val="' + esc(o[0]) + '">' + esc(o[1]) + '</button>';
+  }).join('') + '</div>' + (useAuto ? '<div class="autonote">⚙️ ' + esc(autoNote || 'Automático') + '. Tóquelo para confirmarlo o elija otra opción.</div>' : '');
 }
-function fieldBlock(sk, f, sd) {
+function fieldBlock(sk, f, sd, E) {
   var path = sk + '.' + f.k, h = '<div class="f"><label>' + esc(f.label) + '</label>' + (f.prompt ? '<div class="prompt">' + esc(f.prompt) + '</div>' : '');
+  var ed = E ? (E.data[sk] || {}) : {};
   if (f.type === 'range') {
+    if ((blank(sd.inicio) && ed.inicio) || (blank(sd.fin) && ed.fin)) h += '<div class="autonote" style="margin:0 0 6px">⚙️ Si lo deja vacío se usan las fechas del registro de campo: ' + esc(COR.fmtDate(ed.inicio || '') || '—') + ' al ' + esc(COR.fmtDate(ed.fin || '') || '—') + '.</div>';
     h += '<div class="row"><div style="flex:1;min-width:140px"><div class="muted">Inicio</div>' + inputHtml(sk + '.inicio', sd.inicio, { type: 'date' }) + '</div>' +
       '<div style="flex:1;min-width:140px"><div class="muted">Final</div>' + inputHtml(sk + '.fin', sd.fin, { type: 'date' }) + '</div></div>';
     return h + '</div>';
   }
-  if (f.type === 'choice') return h + seg(path, f.options, sd[f.k], true) + '</div>';
-  h += inputHtml(path, sd[f.k], { type: f.type });
-  if (f.k !== 'nombre' && f.k !== 'codigo') h += chips(path, sd[f.k]);
+  if (f.type === 'choice') return h + seg(path, f.options, sd[f.k], true, ed[f.k], 'Sugerido según el cumplimiento de los KPI') + '</div>';
+  var ph = blank(sd[f.k]) && !blank(ed[f.k]) ? 'Automático: ' + ed[f.k] : '';
+  h += inputHtml(path, sd[f.k], { type: f.type, ph: ph });
+  if (f.k !== 'nombre' && f.k !== 'codigo') h += chips(path, sd[f.k], ['encargado', 'responsable', 'resp'].indexOf(f.k) >= 0);
   return h + '</div>';
 }
 
-function tableView(p, s, mode) {
+function tableView(p, s, mode, E) {
+  E = E || eff(p);
   var d = p.data, sd = d[s] = d[s] || {}, rows = sd.rows || [], h = '';
   if (sd.na && mode === 'campo') return '<p class="muted">No aplica (definido antes de la visita).</p>';
   if (sd.na) {
@@ -449,7 +538,10 @@ function tableView(p, s, mode) {
       if (mode === 'plan' && !c.plan) return;
       if (known && c.plan) return;
       var path = s + '.rows.' + i + '.' + c.k;
-      h += '<div class="f"><label>' + esc(c.label) + '</label>' + (c.choice ? seg(path, [['Sí', 'Sí', 'si'], ['Parcial', 'Parcial', 'par'], ['No', 'No', 'no']], r[c.k]) : inputHtml(path, r[c.k], { type: c.type, big: c.big && mode === 'campo', mode: c.mode })) + '</div>';
+      var er = (get(E.data, s + '.rows') || [])[i] || {};
+      var ctl = c.choice ? '<div data-cum="' + i + '">' + cumSeg(path, r, er) + '</div>'
+        : inputHtml(path, r[c.k], { type: c.type, big: c.big && mode === 'campo', mode: c.mode, ph: c.k === 'porcentaje' && blank(r[c.k]) && er[c.k] ? 'Automático: ' + er[c.k] : '' });
+      h += '<div class="f"><label>' + esc(c.label) + '</label>' + ctl + '</div>';
     });
     h += '</div></div>';
   });
@@ -460,11 +552,15 @@ function tableView(p, s, mode) {
   return h;
 }
 
+function cumSeg(path, r, er) {
+  var a = blank(r.cumple) ? er.cumple || evalKpi(r.meta, r.resultado) : '';
+  return seg(path, [['Sí', 'Sí', 'si'], ['Parcial', 'Parcial', 'par'], ['No', 'No', 'no']], r.cumple, false, a, 'Calculado comparando el resultado con la meta');
+}
 function s8View(p) {
   var sd = p.data.s8 = p.data.s8 || {}, fx = sd.fixed = sd.fixed || {}, h = '';
   FIXED8.forEach(function (a) {
     var x = fx[a.k] || {};
-    h += '<div class="rowcard"><div class="rh"><span>' + esc(a.label) + '</span><span class="ops"><button class="iconb" data-fill8="' + a.k + '">NA</button></span></div><div class="rb">' +
+    h += '<div class="rowcard"><div class="rh"><span>' + esc(a.label) + '</span><span class="ops"><button class="iconb wide" data-sinnov="' + a.k + '">✓ Sin novedades</button><button class="iconb" data-fill8="' + a.k + '">NA</button></span></div><div class="rb">' +
       '<div class="f"><label>Situación observada</label>' + inputHtml('s8.fixed.' + a.k + '.sit', x.sit, { type: 'area', rows: 2 }) + '</div>' +
       '<div class="f"><label>Acción o mejora propuesta</label>' + inputHtml('s8.fixed.' + a.k + '.accion', x.accion, { type: 'area', rows: 2 }) + '</div>' +
       '<div class="f"><label>Responsable o estado</label>' + inputHtml('s8.fixed.' + a.k + '.resp', x.resp) + '</div></div></div>';
@@ -478,27 +574,30 @@ function s8View(p) {
   });
   return h + '<button class="btn block sky" data-act="addotro">+ Agregar otro aspecto</button>';
 }
-function s9View(p) {
-  var sd = p.data.s9 = p.data.s9 || {}, h = '';
+function s9View(p, E) {
+  E = E || eff(p);
+  var sd = p.data.s9 = p.data.s9 || {}, ec = get(E.data, 's9.crit') || [], h = '';
+  var g = p.gate || '', ag = !g ? E.gate : '';
+  var gcls = function (v, c) { return g === v ? 'sel ' + c : ag === v ? 'sel auto ' + c : ''; };
   h += '<div class="gate"><b>¿La prueba es favorable y se autoriza avanzar hacia la implementación?</b>' +
-    '<div class="seg"><button class="' + (p.gate === 'favorable' ? 'sel si' : '') + '" data-gate="favorable">Sí → se llena la secc. 9</button><button class="' + (p.gate === 'no' ? 'sel no' : '') + '" data-gate="no">No → secc. 9 "No aplica"</button></div></div>';
+    '<div class="seg"><button class="' + gcls('favorable', 'si') + '" data-gate="favorable">Sí → se llena la secc. 9</button><button class="' + gcls('no', 'no') + '" data-gate="no">No → secc. 9 "No aplica"</button></div>' +
+    (ag ? '<div class="autonote">⚙️ Sugerido según el cumplimiento de los KPI. Tóquelo para confirmarlo o elija la otra opción.</div>' : '') + '</div>';
   CRIT9.forEach(function (q, i) {
-    var val = (sd.crit || [])[i], sug = i === 2 ? autoCrit2(p) : '';
-    h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, val) +
-      (sug && blank(val) ? '<div class="prompt" style="margin-top:6px">Según los KPI registrados: <b>' + esc(sug === 'Parcialmente o requiere ajustes' ? 'Parcial / ajustes' : sug) + '</b> (se usará si no marca otra opción).</div>' : '') + '</div>';
+    h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, (sd.crit || [])[i], false, ec[i], 'Sugerido según el cumplimiento de los KPI') + '</div>';
   });
   h += '<div class="banner info">✨ La comparación y la conclusión se redactan solas con los datos registrados. Toque <b>Redactar</b> para verlas y ajustarlas. Si las deja vacías, se redactan al generar el Excel.</div>';
   h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Se arma con la línea base, los KPI (meta, resultado, cumplimiento) y los parámetros.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area', rows: 6 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="grafico">✨ Redactar</button></div></div>';
   h += '<div class="f"><label>Conclusión y recomendación</label><div class="prompt">Se arma con los criterios, los KPI, las dificultades y mejoras de la secc. 7 y la decisión.</div>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 7 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="conclusion">✨ Redactar</button></div></div>';
   return h;
 }
-function s12View(p) {
+function s12View(p, E) {
   var sd = p.data.s12 = p.data.s12 || {}, h = '';
+  if (!myName()) h += '<div class="banner warn">Configure <b>su nombre</b> en la pantalla de inicio para que "Elaborado por" se llene solo.</div>';
   ROLES.forEach(function (r) {
-    var x = sd[r[0]] || {};
+    var x = sd[r[0]] || {}, el = r[0] === 'elab';
     h += '<div class="rowcard"><div class="rh"><span>' + r[1] + '</span></div><div class="rb">' +
-      '<div class="f"><label>Nombre</label>' + inputHtml('s12.' + r[0] + '.nombre', x.nombre) + chips('s12.' + r[0] + '.nombre', x.nombre) + '</div>' +
-      '<div class="f"><label>Fecha</label>' + inputHtml('s12.' + r[0] + '.fecha', x.fecha, { type: 'date' }) + '</div></div></div>';
+      '<div class="f"><label>Nombre</label>' + inputHtml('s12.' + r[0] + '.nombre', x.nombre, { ph: el && myName() ? 'Automático: ' + myName() : '' }) + chips('s12.' + r[0] + '.nombre', x.nombre, true) + '</div>' +
+      '<div class="f"><label>Fecha</label>' + inputHtml('s12.' + r[0] + '.fecha', x.fecha, { type: 'date' }) + (el && blank(x.fecha) ? '<div class="autonote">⚙️ Si la deja vacía se usa la fecha en que se genera el Excel.</div>' : '') + '</div></div></div>';
   });
   return h;
 }
@@ -516,23 +615,23 @@ function fotosView(p) {
 
 function renderView(p, ph, i) {
   var P = PHASES[ph], vw = P && P.views[i]; if (!vw) return renderPhase(p, ph);
-  var s = vw.s, d = p.data, h = top(vw.t, get(d, 's1.nombre') || '', 'v=phase&p=' + p.id + '&ph=' + ph) + '<main class="wrap">';
+  var s = vw.s, d = p.data, E = eff(p), h = top(vw.t, get(d, 's1.nombre') || '', 'v=phase&p=' + p.id + '&ph=' + ph) + '<main class="wrap">';
   if (vw.note) h += '<p class="note">' + esc(vw.note) + '</p>';
-  if (s === 's1') { var sd1 = d.s1 = d.s1 || {}; F1.forEach(function (f) { h += fieldBlock('s1', f, sd1); }); }
+  if (s === 's1') { var sd1 = d.s1 = d.s1 || {}; F1.forEach(function (f) { h += fieldBlock('s1', f, sd1, E); }); }
   else if (s === 's2') { var sd2 = d.s2 = d.s2 || {}; F2.forEach(function (f) { h += fieldBlock('s2', f, sd2); }); }
   else if (s === 's10') {
-    if (p.gate === 'no') h += '<div class="banner info">En la evaluación (secc. 8) se indicó que la prueba <b>no es favorable</b>. Esta sección aparecerá como "No aplica" en el Excel.</div>';
-    else { if (!p.gate) h += '<div class="banner warn">Primero responda en la secc. 8 si la prueba es favorable.</div>'; var sd10 = d.s10 = d.s10 || {}; F10.forEach(function (f) { h += fieldBlock('s10', f, sd10); }); }
+    if (E.gate === 'no') h += '<div class="banner info">' + (p.gate ? 'En la evaluación (secc. 8) se indicó' : 'Según los KPI registrados (ninguno cumple la meta), se considera') + ' que la prueba <b>no es favorable</b>. Esta sección aparecerá como "No aplica" en el Excel.</div>';
+    else { if (!E.gate) h += '<div class="banner warn">Primero responda en la secc. 8 si la prueba es favorable.</div>'; var sd10 = d.s10 = d.s10 || {}; F10.forEach(function (f) { h += fieldBlock('s10', f, sd10, E); }); }
   }
   else if (s === 's11') { var sd11 = d.s11 = d.s11 || {}; F11.forEach(function (f) { h += fieldBlock('s11', f, sd11); }); }
   else if (s === 'med') {
     h += '<div class="sub">5 · Condiciones y parámetros</div>' + tableView(p, 's5', vw.m);
     h += '<div class="sub">6 · KPI y resultados</div>' + tableView(p, 's7', vw.m);
   }
-  else if (COLS[s]) h += tableView(p, s, vw.m);
+  else if (COLS[s]) h += tableView(p, s, vw.m, E);
   else if (s === 's8') h += s8View(p);
-  else if (s === 's9') h += s9View(p);
-  else if (s === 's12') h += s12View(p);
+  else if (s === 's9') h += s9View(p, E);
+  else if (s === 's12') h += s12View(p, E);
   else if (s === 'fotos') h += fotosView(p);
   h += '<div class="saved" id="savedFlag"></div>';
   var prev = i > 0 ? 'v=view&p=' + p.id + '&ph=' + ph + '&i=' + (i - 1) : null;
@@ -582,8 +681,18 @@ function confirmBox(title, text, okLabel, fn, danger) {
     bg.querySelector('[data-ok]').onclick = function () { close(); fn(); };
   });
 }
-function newPilot() {
-  modal('<h3>Nuevo piloto</h3><p>Podrá completar el resto por etapas.</p>' +
+/* Copia lo reutilizable de un piloto (planificación, procedimiento, recursos y KPI con meta), sin resultados */
+function templateFrom(src) {
+  var d = clone(src.data), o = { __v: 2 };
+  var s1 = d.s1 || {}; o.s1 = { lugar: s1.lugar, responsable: s1.responsable, encargado: s1.encargado, objetivo: s1.objetivo, partes: s1.partes, resultado: s1.resultado, alcance: s1.alcance };
+  if (d.s2) o.s2 = { hipotesis: d.s2.hipotesis, lineaBase: d.s2.lineaBase, metodo: d.s2.metodo };
+  if (d.s3) o.s3 = d.s3;
+  if (d.s4) o.s4 = { na: d.s4.na, rows: (d.s4.rows || []).map(function (r) { return { recurso: r.recurso, cantidad: r.cantidad, unidad: r.unidad, obs: r.obs }; }) };
+  if (d.s7) o.s7 = { na: d.s7.na, rows: (d.s7.rows || []).map(function (r) { return { kpi: r.kpi, evalua: r.evalua, meta: r.meta }; }) };
+  return o;
+}
+function newPilot(src) {
+  modal('<h3>' + (src ? 'Duplicar como plantilla' : 'Nuevo piloto') + '</h3><p>' + (src ? 'Se copian los datos generales, la metodología, el procedimiento, los recursos y los KPI con su meta de "' + esc(get(src.data, 's1.nombre') || '') + '". No se copian resultados, evaluación, fotos ni fechas.' : 'Podrá completar el resto por etapas.') + '</p>' +
     '<div class="f"><label>Nombre de la iniciativa</label><input class="in" id="nNom" autocomplete="off"></div>' +
     '<div class="f"><label>Código o referencia</label><div class="prompt">Código de Wave o número de iniciativa.</div><input class="in" id="nCod" autocomplete="off"></div>' +
     '<div class="row"><button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>Crear</button></div>', function (bg, close) {
@@ -593,7 +702,9 @@ function newPilot() {
       if (!nom) { toast('Escriba el nombre de la iniciativa.'); return; }
       var dup = cod && Object.keys(PIL).some(function (k) { return (get(PIL[k].data, 's1.codigo') || '').toLowerCase() === cod.toLowerCase(); });
       if (dup) { toast('Ya hay un piloto con ese código en este celular.'); return; }
-      var p = { id: uid(), createdAt: new Date().toISOString(), data: { __v: 2, s1: { nombre: nom, codigo: cod } }, fotos: [], gate: '' };
+      var data = src ? templateFrom(src) : { __v: 2, s1: {} };
+      data.s1 = data.s1 || {}; data.s1.nombre = nom; data.s1.codigo = cod;
+      var p = { id: uid(), createdAt: new Date().toISOString(), data: data, fotos: [], gate: '' };
       PIL[p.id] = p; save(p, true); close();
       go({ v: 'pilot', p: p.id });
     };
@@ -602,9 +713,11 @@ function newPilot() {
 function pilotMenu(p) {
   modal('<h3>' + esc(get(p.data, 's1.nombre') || 'Piloto') + '</h3><p>Opciones del piloto</p>' +
     '<button class="btn block sky" data-m="share" style="margin-bottom:10px">📤 Compartir piloto (para que otra persona lo continúe)</button>' +
+    '<button class="btn block sky" data-m="dup" style="margin-bottom:10px">📄 Duplicar como plantilla para otro piloto</button>' +
     '<button class="btn block danger" data-m="del" style="margin-bottom:10px">🗑 Eliminar de este celular</button>' +
     '<button class="btn block" data-close>Cerrar</button>', function (bg, close) {
     bg.querySelector('[data-m="share"]').onclick = function () { close(); exportPilot(p); };
+    bg.querySelector('[data-m="dup"]').onclick = function () { close(); newPilot(p); };
     bg.querySelector('[data-m="del"]').onclick = function () {
       close();
       confirmBox('Eliminar piloto', 'Se borrará "' + (get(p.data, 's1.nombre') || '') + '" y sus fotos de este celular. Si no lo ha compartido, se pierde.', 'Eliminar', function () {
@@ -699,7 +812,7 @@ function addFotos(p, files) {
     chain = chain.then(function () { return compress(f); }).then(function (c) {
       if (!c) return;
       var id = 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      return putPhoto(id, p.id, c.blob).then(function () { p.fotos = p.fotos || []; p.fotos.push({ id: id, w: c.w, h: c.h, caption: '', at: new Date().toISOString() }); n++; });
+      return putPhoto(id, p.id, c.blob).then(function () { stampCampo(p); p.fotos = p.fotos || []; p.fotos.push({ id: id, w: c.w, h: c.h, caption: '', at: new Date().toISOString() }); n++; });
     });
   });
   chain.then(function () { save(p, true); render(); toast(n + ' foto(s) guardada(s). Agregue una descripción.'); }, function () { toast('No se pudieron guardar las fotos.'); render(); });
@@ -710,13 +823,9 @@ function makeExcel(p) {
   var btn = document.getElementById('btnExcel');
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
   var inc = document.getElementById('incFotos'), withPhotos = inc && inc.checked;
-  var rec = clone(p.data), fotos = p.fotos || [];
-  rec.s9 = rec.s9 || {};
-  rec.s9.crit = (rec.s9.crit || []).slice();
-  if (blank(rec.s9.crit[2]) && autoCrit2(p)) rec.s9.crit[2] = autoCrit2(p);
-  if (blank(rec.s9.grafico)) rec.s9.grafico = autoComparacion(p);
-  if (blank(rec.s9.conclusion)) rec.s9.conclusion = autoConclusion(p);
-  if (p.gate === 'no') rec.s10 = { decision: 'No aplica', cronograma: 'No aplica', kpiDef: 'No aplica', frec: 'No aplica', resp: 'No aplica' };
+  var E = eff(p), rec = E.data, fotos = p.fotos || [];
+  if (blank(rec.s9.grafico)) rec.s9.grafico = autoComparacion(E);
+  if (blank(rec.s9.conclusion)) rec.s9.conclusion = autoConclusion(E);
   if (fotos.length) {
     rec.s13 = rec.s13 || {};
     var base = rec.s13.na ? [] : (rec.s13.rows || []);
@@ -751,11 +860,15 @@ function calcPct(p) {
 /* ---------- Eventos ---------- */
 function cur() { return R.p && PIL[R.p]; }
 app.addEventListener('input', function (e) {
-  var t = e.target, p = cur(); if (!p) return;
+  var t = e.target;
+  if (t.hasAttribute('data-myname')) { setMyName(t.value.trim()); return; }
+  var p = cur(); if (!p) return;
   if (t.dataset.p) {
     set(p.data, t.dataset.p, t.value);
     var wrap = t.closest('.f'); if (wrap) wrap.querySelectorAll('.chip.sel').forEach(function (c) { c.classList.remove('sel'); });
     save(p);
+    var mk = /^s7\.rows\.(\d+)\.(resultado|meta)$/.exec(t.dataset.p);
+    if (mk) { var box = app.querySelector('[data-cum="' + mk[1] + '"]'); if (box) box.innerHTML = cumSeg('s7.rows.' + mk[1] + '.cumple', p.data.s7.rows[+mk[1]], {}); }
   } else if (t.dataset.cap) {
     var f = (p.fotos || []).find(function (x) { return x.id === t.dataset.cap; }); if (f) { f.caption = t.value; save(p); }
   }
@@ -782,7 +895,7 @@ app.addEventListener('click', function (e) {
     set(p.data, ds.setp, curV === ds.val ? '' : ds.val); save(p); keepScroll(render); return;
   }
   if (ds.auto) {
-    var key = ds.auto, txt = key === 'grafico' ? autoComparacion(p) : autoConclusion(p);
+    var EE = eff(p), key = ds.auto, txt = key === 'grafico' ? autoComparacion(EE) : autoConclusion(EE);
     var apply = function () { set(p.data, 's9.' + key, txt); save(p); keepScroll(render); toast('Texto redactado. Revíselo y ajústelo si hace falta.'); };
     if (!blank(get(p.data, 's9.' + key))) confirmBox('Reemplazar texto', 'Ya hay texto en este campo. ¿Reemplazarlo por la redacción automática?', 'Reemplazar', apply); else apply();
     return;
@@ -811,6 +924,7 @@ app.addEventListener('click', function (e) {
     save(p); keepScroll(render); return;
   }
   if (ds.up != null) { var rows = p.data[ds.s].rows, k = +ds.up, tmp = rows[k - 1]; rows[k - 1] = rows[k]; rows[k] = tmp; save(p); keepScroll(render); return; }
+  if (ds.sinnov) { var fs8 = p.data.s8.fixed[ds.sinnov] = p.data.s8.fixed[ds.sinnov] || {}; if (blank(fs8.sit)) fs8.sit = 'Sin novedades'; if (blank(fs8.accion)) fs8.accion = 'Ninguna'; if (blank(fs8.resp)) fs8.resp = 'No aplica'; save(p); keepScroll(render); return; }
   if (ds.fill8) { var fx = p.data.s8.fixed[ds.fill8] = p.data.s8.fixed[ds.fill8] || {}; ['sit', 'accion', 'resp'].forEach(function (c) { if (blank(fx[c])) fx[c] = 'No aplica'; }); save(p); keepScroll(render); return; }
   if (ds.act === 'addotro') { var s8 = p.data.s8 = p.data.s8 || {}; s8.otros = s8.otros || []; s8.otros.push({}); save(p); keepScroll(render); return; }
   if (ds.delotro != null) { p.data.s8.otros.splice(+ds.delotro, 1); save(p); keepScroll(render); return; }
