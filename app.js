@@ -215,7 +215,7 @@ function eff(p) {
 }
 /* Datos para los gráficos: un gráfico por KPI con línea base, meta y resultado */
 function unitOf(t) {
-  return String(t || '').replace(/[≤≥<>=±]/g, ' ').replace(/-?\d[\d.,]*/g, ' ')
+  return String(t || '').replace(/\([^)]*\)/g, ' ').replace(/[≤≥<>=±]/g, ' ').replace(/-?\d[\d.,]*/g, ' ')
     .replace(/\b(m[aá]x(imo)?|m[ií]n(imo)?|entre|hasta|al menos|como|mayor|menor|o igual|igual|superior|inferior|no|que|de|a|y|aprox\.?)\b/gi, ' ')
     .replace(/[–—\-]/g, ' ').replace(/\s+/g, ' ').trim();
 }
@@ -781,16 +781,26 @@ function deliver(blob, name, mime, title) {
     (canShare ? '<button class="btn block primary" data-share style="margin-bottom:10px">📤 Compartir (WhatsApp, correo, OneDrive…)</button>' : '') +
     '<button class="btn block ' + (canShare ? 'sky' : 'primary') + '" data-dl style="margin-bottom:10px">⬇️ Guardar en el celular</button>' +
     '<button class="btn block" data-close>Cerrar</button>', function (bg, close) {
-    var sh = bg.querySelector('[data-share]');
-    if (sh) sh.onclick = function () {
-      navigator.share({ files: [file], title: name }).then(close, function (e) { if (!e || e.name !== 'AbortError') toast('No se pudo compartir. Use "Guardar en el celular".'); });
-    };
-    bg.querySelector('[data-dl]').onclick = function () {
+    var download = function (msg) {
       var u = URL.createObjectURL(blob), a = document.createElement('a');
       a.href = u; a.download = name; document.body.appendChild(a); a.click();
       setTimeout(function () { URL.revokeObjectURL(u); a.remove(); }, 4000);
-      toast('Archivo guardado en Descargas.');
+      if (msg) showSaved(); else toast('Archivo guardado en Descargas.');
     };
+    var showSaved = function () {
+      var box = bg.querySelector('.modal');
+      box.innerHTML = '<h3>Guardado en Descargas</h3><p>Este celular no permite compartir archivos de Excel directamente desde el navegador, así que se guardó en <b>Descargas</b>:<br><b>' + esc(name) + '</b></p>' +
+        '<ol class="steps"><li>Abra la app <b>Archivos</b> (o la notificación de descarga).</li><li>Entre a <b>Descargas</b> y mantenga presionado el archivo.</li><li>Toque <b>Compartir</b> y elija WhatsApp, correo u OneDrive.</li></ol>' +
+        '<button class="btn block primary" data-close style="margin-top:8px">Entendido</button>';
+    };
+    var sh = bg.querySelector('[data-share]');
+    if (sh) sh.onclick = function () {
+      navigator.share({ files: [file], title: name }).then(close, function (e) {
+        if (e && e.name === 'AbortError') return;
+        download(true); /* el celular no deja compartir este tipo de archivo: se guarda y se explica cómo enviarlo */
+      });
+    };
+    bg.querySelector('[data-dl]').onclick = function () { download(false); };
   });
 }
 function blobToDataUrl(b) { return new Promise(function (res) { var r = new FileReader(); r.onload = function () { res(r.result); }; r.onerror = function () { res(''); }; r.readAsDataURL(b); }); }
