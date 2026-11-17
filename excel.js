@@ -1,4 +1,4 @@
-/* Generador del Excel COR-GPPT-R006 (V2 simplificada) a partir de un registro del formulario.
+/* Generador del Excel COR-GPPT-R006 (formato de registro técnico de pilotos) a partir de un registro del formulario.
    Llena la plantilla original celda por celda: conserva logos, estilos, casillas y saltos de página.
    Funciona en el navegador (window.JSZip) y en Node (require('jszip')) para pruebas. */
 (function (g) {
@@ -240,7 +240,7 @@
     row.attrs = ' ht="' + h + '" customHeight="1"' + (rest ? ' ' + rest : '');
   }
 
-  /* ---------- Mapeo registro → plantilla V2 ---------- */
+  /* ---------- Mapeo registro → plantilla del formato ---------- */
   function tableRows(sec) {
     sec = sec || {};
     if (sec.na) return { na: true, rows: [] };

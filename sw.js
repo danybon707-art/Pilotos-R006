@@ -1,5 +1,5 @@
 /* Guarda la app en el celular para que abra sin señal. Cambie VERSION al publicar cambios. */
-var VERSION = 'cor-campo-v8';
+var VERSION = 'cor-campo-v9';
 var FILES = ['./', 'index.html', 'app.js', 'excel.js', 'plantilla.js', 'jszip.min.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSION).then(function (c) { return c.addAll(FILES); }).then(function () { return self.skipWaiting(); }));

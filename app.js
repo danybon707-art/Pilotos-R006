@@ -1,6 +1,6 @@
 /* App de campo COR-GPPT-R006 — funciona sin cuentas y sin señal.
    Los pilotos y las fotos se guardan en el propio dispositivo (IndexedDB).
-   El Excel V2 se genera en el dispositivo con excel.js + plantilla.js. */
+   El Excel (formato de registro técnico de pilotos) se genera en el dispositivo con excel.js + plantilla.js. */
 (function () {
 'use strict';
 var STD = COR.STD, FIXED8 = COR.FIXED8, CRIT9 = COR.CRIT9;
@@ -476,7 +476,7 @@ function renderHome() {
     '<li><b>Antes de la visita:</b> datos generales, metodología y lo que se va a medir (KPI con su meta y parámetros).</li>' +
     '<li><b>En campo:</b> procedimiento, insumos, valores medidos, dificultades y fotos. Funciona sin señal.</li>' +
     '<li><b>Cierre:</b> evaluación, seguimiento, cierre y validación.</li>' +
-    '<li><b>Revisar y generar Excel:</b> la app muestra lo que falta y genera el formato V2 para compartir por WhatsApp, correo u OneDrive.</li></ol>' +
+    '<li><b>Revisar y generar Excel:</b> la app muestra lo que falta y genera el Excel en el formato de registro técnico de pilotos para compartir por WhatsApp, correo u OneDrive.</li></ol>' +
     '<p class="muted" style="margin:6px 0 0">Los datos se guardan solo en este celular. Para que otra persona continúe un piloto, use <b>Compartir piloto</b> y ella lo abre con <b>Abrir piloto recibido</b>.</p></div>';
   h += '</main>';
   app.innerHTML = h;
