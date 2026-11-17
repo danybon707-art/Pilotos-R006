@@ -42,7 +42,7 @@ var COLS = {
   s3: [{ k: 'etapa', label: 'Etapa o actividad' }, { k: 'desc', label: 'Descripción', type: 'area' }, { k: 'tiempo', label: 'Tiempo' }, { k: 'equipo', label: 'Equipo o herramienta' }],
   s4: [{ k: 'recurso', label: 'Recurso o insumo' }, { k: 'cantidad', label: 'Cantidad', mode: 'decimal' }, { k: 'unidad', label: 'Unidad' }, { k: 'porcentaje', label: 'Porcentaje (opcional)', optional: true }, { k: 'obs', label: 'Observación (opcional)', optional: true }],
   s5: [{ k: 'aspecto', label: 'Etapa o aspecto', plan: true }, { k: 'parametro', label: 'Parámetro o condición', plan: true }, { k: 'valor', label: 'Valor o rango', big: true }, { k: 'obs', label: 'Observación (opcional)', optional: true }],
-  s7: [{ k: 'kpi', label: 'KPI o resultado', plan: true }, { k: 'evalua', label: 'Qué evalúa', plan: true }, { k: 'meta', label: 'Meta o criterio (con unidad)', plan: true }, { k: 'resultado', label: 'Resultado obtenido (con unidad)', big: true }, { k: 'cumple', label: 'Cumplimiento', choice: ['Sí', 'Parcial', 'No'] }],
+  s7: [{ k: 'kpi', label: 'KPI o resultado', plan: true }, { k: 'evalua', label: 'Qué evalúa', plan: true }, { k: 'base', label: 'Línea base: valor actual (opcional, para el gráfico)', plan: true, optional: true }, { k: 'meta', label: 'Meta o criterio (con unidad)', plan: true }, { k: 'resultado', label: 'Resultado obtenido (con unidad)', big: true }, { k: 'cumple', label: 'Cumplimiento', choice: ['Sí', 'Parcial', 'No'] }],
   s13: [{ k: 'anexo', label: 'Anexo o evidencia' }, { k: 'desc', label: 'Descripción o referencia', type: 'area' }]
 };
 var ROWNAME = { s3: 'Etapa', s4: 'Recurso', s5: 'Parámetro', s7: 'KPI / resultado', s13: 'Anexo' };
@@ -149,7 +149,8 @@ function setMyName(v) { try { localStorage.setItem(NAME_KEY, v); } catch (e) {} 
 function parseNum(str) {
   var m = String(str || '').match(/-?\d[\d.,]*/); if (!m) return null;
   var t = m[0].replace(/[.,]$/, '');
-  if (t.indexOf(',') >= 0 && t.indexOf('.') >= 0) t = t.replace(/\./g, '').replace(',', '.');
+  if (t.indexOf(',') >= 0 && t.indexOf('.') >= 0) t = t.lastIndexOf(',') > t.lastIndexOf('.') ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  else if (/^-?[1-9]\d{0,2}([.,]\d{3})+$/.test(t)) t = t.replace(/[.,]/g, ''); /* 1.200 o 1,200 = mil doscientos */
   else t = t.replace(',', '.');
   var n = parseFloat(t); return isNaN(n) ? null : n;
 }
@@ -211,6 +212,43 @@ function eff(p) {
   if (blank(s1.inicio) && cp.ini) s1.inicio = cp.ini;
   if (blank(s1.fin) && cp.fin) s1.fin = cp.fin;
   return E;
+}
+/* Datos para los gráficos: un gráfico por KPI con línea base, meta y resultado */
+function unitOf(t) {
+  return String(t || '').replace(/[≤≥<>=±]/g, ' ').replace(/-?\d[\d.,]*/g, ' ')
+    .replace(/\b(m[aá]x(imo)?|m[ií]n(imo)?|entre|hasta|al menos|como|mayor|menor|o igual|igual|superior|inferior|no|que|de|a|y|aprox\.?)\b/gi, ' ')
+    .replace(/[–—\-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+var CUMCOL = { 'Sí': '1F8A5B', 'Parcial': 'C98A10', 'No': 'B3362C' };
+function chartData(E) {
+  var out = [];
+  kpiRows(E).forEach(function (r) {
+    var res = parseNum(r.resultado); if (res === null) return;
+    var cats = [], vals = [], cols = [];
+    var b = real(r.base) ? parseNum(r.base) : null;
+    if (b !== null) { cats.push('Línea base'); vals.push(b); cols.push('9AA9B8'); }
+    if (real(r.meta)) {
+      var m = String(r.meta).toLowerCase(), nums = (m.match(/-?\d[\d.,]*/g) || []).map(parseNum).filter(function (x) { return x !== null; });
+      var hasOp = /≤|≥|<|>|m[aá]x|m[ií]n|menor|mayor|hasta|al menos|superior|inferior/.test(m);
+      if (nums.length >= 2 && !hasOp && /entre|[–—-]|\sa\s|\sy\s/.test(m)) { cats.push('Meta mín.', 'Meta máx.'); vals.push(Math.min(nums[0], nums[1]), Math.max(nums[0], nums[1])); cols.push('1F4E78', '1F4E78'); }
+      else if (nums.length) { cats.push('Meta'); vals.push(nums[0]); cols.push('1F4E78'); }
+    }
+    cats.push('Resultado'); vals.push(res); cols.push(CUMCOL[r.cumple] || '4A90D9');
+    if (vals.length < 2) return;
+    var unit = unitOf(r.resultado) || unitOf(r.meta) || unitOf(r.base);
+    out.push({ title: r.kpi.trim() + (unit ? ' (' + unit + ')' : ''), unit: unit, cats: cats, vals: vals, colors: cols, cumple: r.cumple });
+  });
+  return out;
+}
+function chartSvg(ch) {
+  var W = 300, H = 120, pad = 18, max = Math.max.apply(null, ch.vals.concat([0])) || 1, n = ch.vals.length, bw = (W - 20) / n * 0.62;
+  var bars = ch.vals.map(function (v, i) {
+    var x = 10 + (W - 20) / n * i + ((W - 20) / n - bw) / 2, h = Math.max(1, (H - pad * 2) * v / max), y = H - pad - h;
+    return '<rect x="' + x.toFixed(1) + '" y="' + y.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="3" fill="#' + ch.colors[i] + '"/>' +
+      '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (y - 4).toFixed(1) + '" font-size="10" text-anchor="middle" fill="#1a2735" font-weight="700">' + String(v).replace('.', ',') + '</text>' +
+      '<text x="' + (x + bw / 2).toFixed(1) + '" y="' + (H - 4) + '" font-size="9.5" text-anchor="middle" fill="#5a6b7d">' + esc(ch.cats[i]) + '</text>';
+  }).join('');
+  return '<div class="chartbox"><b>' + esc(ch.title) + '</b><svg viewBox="0 0 ' + W + ' ' + H + '" width="100%" role="img" aria-label="' + esc(ch.title) + '"><line x1="6" x2="' + (W - 6) + '" y1="' + (H - pad) + '" y2="' + (H - pad) + '" stroke="#d6e0eb"/>' + bars + '</svg></div>';
 }
 function stampCampo(p) {
   var t = today(), c = p.campo = p.campo || {};
@@ -336,7 +374,7 @@ function autoComparacion(p) {
   if (rows.length) {
     out.push('Resultados obtenidos frente a la meta:');
     rows.forEach(function (r) {
-      out.push('• ' + r.kpi.trim() + ': meta ' + (real(r.meta) ? r.meta.trim() : 'no definida') + '; resultado ' + (real(r.resultado) ? r.resultado.trim() : 'no registrado') + ' (' + (EST[r.cumple] || 'sin evaluar') + ').');
+      out.push('• ' + r.kpi.trim() + ': ' + (real(r.base) ? 'línea base ' + r.base.trim() + '; ' : '') + 'meta ' + (real(r.meta) ? r.meta.trim() : 'no definida') + '; resultado ' + (real(r.resultado) ? r.resultado.trim() : 'no registrado') + ' (' + (EST[r.cumple] || 'sin evaluar') + ').');
     });
     out.push(kpiResumen(rows));
   } else out.push('No se registraron KPI para comparar con la línea base.');
@@ -528,12 +566,12 @@ function tableView(p, s, mode, E) {
     h += '<div class="empty">No se definieron ' + (s === 's7' ? 'KPI' : 'parámetros') + ' antes de la visita.<br>Puede agregarlos aquí.</div>';
   }
   rows.forEach(function (r, i) {
-    var known = mode === 'campo' && COLS[s].filter(function (c) { return c.plan; }).every(function (c) { return !blank(r[c.k]); });
+    var known = mode === 'campo' && COLS[s].filter(function (c) { return c.plan && !c.optional; }).every(function (c) { return !blank(r[c.k]); });
     h += '<div class="rowcard" data-s="' + s + '"><div class="rh"><span>' + ROWNAME[s] + ' ' + (i + 1) + '</span><span class="ops">' +
       (s === 's3' && i > 0 ? '<button class="iconb" data-up="' + i + '" data-s="' + s + '" aria-label="Subir">↑</button>' : '') +
       '<button class="iconb" data-rowna="' + i + '" data-s="' + s + '" title="Vacíos → No aplica">NA</button>' +
       '<button class="iconb" data-delrow="' + i + '" data-s="' + s + '" aria-label="Eliminar">🗑</button></span></div><div class="rb">';
-    if (known) h += '<div class="given">' + COLS[s].filter(function (c) { return c.plan; }).map(function (c) { return '<b>' + esc(c.label.replace(/ \(.*\)$/, '')) + ':</b> ' + esc(r[c.k]); }).join('<br>') + '</div>';
+    if (known) h += '<div class="given">' + COLS[s].filter(function (c) { return c.plan && !blank(r[c.k]); }).map(function (c) { return '<b>' + esc(c.label.replace(/ \(.*\)$/, '')) + ':</b> ' + esc(r[c.k]); }).join('<br>') + '</div>';
     COLS[s].forEach(function (c) {
       if (mode === 'plan' && !c.plan) return;
       if (known && c.plan) return;
@@ -586,7 +624,7 @@ function s9View(p, E) {
     h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, (sd.crit || [])[i], false, ec[i], 'Sugerido según el cumplimiento de los KPI') + '</div>';
   });
   h += '<div class="banner info">✨ La comparación y la conclusión se redactan solas con los datos registrados. Toque <b>Redactar</b> para verlas y ajustarlas. Si las deja vacías, se redactan al generar el Excel.</div>';
-  h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Se arma con la línea base, los KPI (meta, resultado, cumplimiento) y los parámetros.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area', rows: 6 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="grafico">✨ Redactar</button></div></div>';
+  h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Se arma con la línea base, los KPI (meta, resultado, cumplimiento). Si hay gráficos comparativos, en el Excel este apartado muestra solo los gráficos; este texto se usa cuando no hay gráficos.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area', rows: 6 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="grafico">✨ Redactar</button></div></div>';
   h += '<div class="f"><label>Conclusión y recomendación</label><div class="prompt">Se arma con los criterios, los KPI, las dificultades y mejoras de la secc. 7 y la decisión.</div>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 7 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="conclusion">✨ Redactar</button></div></div>';
   return h;
 }
@@ -660,7 +698,11 @@ function renderReview(p) {
       STD.map(function (s) { return '<button class="btn sm" data-fillall="' + s + '">' + s + '</button>'; }).join('') + '</div></div>';
   }
   var nf = (p.fotos || []).length;
-  h += '<div class="card"><label style="display:flex;gap:10px;align-items:center;font-size:15px"><input type="checkbox" id="incFotos" style="width:22px;height:22px"' + (nf ? ' checked' : ' disabled') + '> Incluir hoja "Anexo fotográfico" (' + nf + ' foto' + (nf === 1 ? '' : 's') + ')</label></div>';
+  var chs = chartData(eff(p));
+  h += '<div class="card"><label style="display:flex;gap:10px;align-items:center;font-size:15px;margin-bottom:10px"><input type="checkbox" id="incGraf" style="width:22px;height:22px"' + (chs.length ? ' checked' : ' disabled') + '> Incluir gráficos comparativos en la secc. 8 (' + chs.length + ' KPI)</label>' +
+    '<label style="display:flex;gap:10px;align-items:center;font-size:15px"><input type="checkbox" id="incFotos" style="width:22px;height:22px"' + (nf ? ' checked' : ' disabled') + '> Incluir hoja "Anexo fotográfico" (' + nf + ' foto' + (nf === 1 ? '' : 's') + ')</label>' +
+    (chs.length ? '<div class="sub" style="margin-top:14px">Vista previa de los gráficos</div>' + chs.map(chartSvg).join('') :
+      '<p class="muted" style="margin:10px 0 0">Para tener gráficos, cada KPI necesita un resultado con número y una meta o línea base con número.</p>') + '</div>';
   h += '<div class="dock"><div class="in-dock"><button class="btn primary" data-act="excel" id="btnExcel">📊 Generar Excel</button></div></div>';
   h += '</main>';
   app.innerHTML = h;
@@ -688,7 +730,7 @@ function templateFrom(src) {
   if (d.s2) o.s2 = { hipotesis: d.s2.hipotesis, lineaBase: d.s2.lineaBase, metodo: d.s2.metodo };
   if (d.s3) o.s3 = d.s3;
   if (d.s4) o.s4 = { na: d.s4.na, rows: (d.s4.rows || []).map(function (r) { return { recurso: r.recurso, cantidad: r.cantidad, unidad: r.unidad, obs: r.obs }; }) };
-  if (d.s7) o.s7 = { na: d.s7.na, rows: (d.s7.rows || []).map(function (r) { return { kpi: r.kpi, evalua: r.evalua, meta: r.meta }; }) };
+  if (d.s7) o.s7 = { na: d.s7.na, rows: (d.s7.rows || []).map(function (r) { return { kpi: r.kpi, evalua: r.evalua, base: r.base, meta: r.meta }; }) };
   return o;
 }
 function newPilot(src) {
@@ -824,6 +866,7 @@ function makeExcel(p) {
   if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Generando…'; }
   var inc = document.getElementById('incFotos'), withPhotos = inc && inc.checked;
   var E = eff(p), rec = E.data, fotos = p.fotos || [];
+  var ig = document.getElementById('incGraf'), charts = ig && ig.checked ? chartData(E) : [];
   if (blank(rec.s9.grafico)) rec.s9.grafico = autoComparacion(E);
   if (blank(rec.s9.conclusion)) rec.s9.conclusion = autoConclusion(E);
   if (fotos.length) {
@@ -837,7 +880,7 @@ function makeExcel(p) {
     return getPhoto(f.id).then(function (b) { return b ? b.arrayBuffer() : null; }).then(function (ab) { return ab ? { bytes: new Uint8Array(ab), w: f.w, h: f.h, caption: f.caption } : null; });
   })).then(function (a) { return a.filter(Boolean); }) : Promise.resolve([]);
   photosP.then(function (photos) {
-    return COR.buildXlsx(JSZip, rec, self.COR_XLSX_B64, false, { photos: photos });
+    return COR.buildXlsx(JSZip, rec, self.COR_XLSX_B64, false, { photos: photos, charts: charts });
   }).then(function (blob) {
     var name = 'COR-GPPT-R006_' + (safeName(get(p.data, 's1.codigo')) ? safeName(get(p.data, 's1.codigo')) + '_' : '') + (safeName(get(p.data, 's1.nombre')) || 'piloto') + '.xlsx';
     deliver(blob, name, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Excel listo');

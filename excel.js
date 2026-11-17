@@ -122,6 +122,27 @@
     wb.printEnd = sh(wb.printEnd);
   }
 
+  /* Inserta n filas vacías debajo de `after`, con el estilo (bordes) de la fila `src`. */
+  function insertRowsAfter(S, wb, after, src, n) {
+    if (n <= 0) return;
+    var sh = function (r) { return r > after ? r + n : r; };
+    var newRows = {};
+    Object.keys(S.rows).forEach(function (k) { newRows[sh(+k)] = S.rows[k]; });
+    var base = S.rows[src];
+    for (var i = 1; i <= n; i++) {
+      var cells = {};
+      if (base) Object.keys(base.cells).forEach(function (c) { cells[c] = { attrs: base.cells[c].attrs.replace(/\s*\bt="[^"]*"/, ''), inner: null }; });
+      newRows[after + i] = { attrs: base ? base.attrs : ' spans="2:41" ht="15" customHeight="1"', cells: cells };
+    }
+    S.rows = newRows;
+    S.merges.forEach(function (m) { if (m.r1 > after) m.r1 += n; if (m.r2 > after) m.r2 += n; });
+    S.tail = S.tail.replace(/sqref="([^"]+)"/g, function (_, rng) {
+      return 'sqref="' + rng.split(' ').map(function (part) { return part.replace(/([A-Z]+)(\d+)/g, function (__, c, r) { return c + sh(+r); }); }).join(' ') + '"';
+    });
+    S.tail = S.tail.replace(/<brk id="(\d+)"/g, function (_, id) { return '<brk id="' + sh(+id) + '"'; });
+    wb.printEnd = sh(wb.printEnd);
+  }
+
   /* ---------- Estilos: copia del estilo de la celda con ajuste de texto ---------- */
   function StyleBook(xml) {
     this.xml = xml; this.map = {};
@@ -207,7 +228,7 @@
     return { na: false, rows: sec.rows || [] };
   }
 
-  function fill(S, wb, styles, d) {
+  function fill(S, wb, styles, d, charts) {
     var W = new Writer(S, styles), off = 0;
     var s1 = d.s1 || {}, s2 = d.s2 || {}, s8 = d.s8 || {}, s9 = d.s9 || {}, s10 = d.s10 || {}, s11 = d.s11 || {}, s12 = d.s12 || {};
     var R = function (r) { return r + off; };
@@ -272,7 +293,15 @@
       var val = (s9.crit || [])[i];
       colsC.forEach(function (c, j) { W.box(c + R(124 + i), val === opts[j]); });
     });
-    W.text('B' + R(131), s9.grafico); W.text('B' + R(137), s9.conclusion);
+    /* Con gráficos, el apartado "Comparación…" muestra solo los gráficos (sin texto):
+       el recuadro combinado se alarga para que los gráficos queden dentro */
+    if (charts && charts.length) {
+      var CHR = 15, top0 = R(131), after = R(134), need = Math.ceil(charts.length / 2) * CHR + 1, nb = Math.max(0, need - (after - top0 + 1));
+      if (nb) insertRowsAfter(S, wb, after, R(133), nb);
+      S.merges.forEach(function (m) { if (m.r1 === top0 && m.c1 === 2) m.r2 = after + nb; });
+      wb.chartTop = top0; wb.chartRows = CHR; off += nb;
+    } else W.text('B' + R(131), s9.grafico);
+    W.text('B' + R(137), s9.conclusion);
     /* 9. Seguimiento (148–152) */
     var trio = function (r, options, val) {
       ['Q', 'Y', 'AG'].forEach(function (c, j) { W.box(c + R(r), val === options[j]); });
@@ -354,8 +383,58 @@
     });
   }
 
+  /* ---------- Hoja "Gráfico comparativo" (gráficos nativos de Excel, uno por KPI) ----------
+     charts: [{ title, unit, cats: [..], vals: [..], colors: ['RRGGBB', ..] }] */
+  function chartXml(ch, catRef, valRef) {
+    var n = ch.cats.length;
+    var pts = function (arr, num) { return arr.map(function (x, i) { return '<c:pt idx="' + i + '"><c:v>' + (num ? x : xesc(x)) + '</c:v></c:pt>'; }).join(''); };
+    var dpts = ch.colors.map(function (c, i) { return '<c:dPt><c:idx val="' + i + '"/><c:invertIfNegative val="0"/><c:bubble3D val="0"/><c:spPr><a:solidFill><a:srgbClr val="' + c + '"/></a:solidFill></c:spPr></c:dPt>'; }).join('');
+    var txt = function (sz, b, col) { return '<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="' + sz + '" b="' + (b ? 1 : 0) + '"><a:solidFill><a:srgbClr val="' + (col || '404040') + '"/></a:solidFill></a:defRPr></a:pPr><a:endParaRPr lang="es-HN"/></a:p></c:txPr>'; };
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><c:roundedCorners val="0"/><c:chart>' +
+      '<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1100" b="1"/></a:pPr><a:r><a:rPr lang="es-HN" sz="1100" b="1"><a:solidFill><a:srgbClr val="1F4E78"/></a:solidFill></a:rPr><a:t>' + xesc(ch.title) + '</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/>' +
+      '<c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>' +
+      '<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>' + xesc(ch.unit || 'Valor') + '</c:v></c:tx><c:spPr><a:solidFill><a:srgbClr val="1F4E78"/></a:solidFill></c:spPr><c:invertIfNegative val="0"/>' + dpts +
+      '<c:dLbls><c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>' + txt(1000, true, '1A2735') + '<c:dLblPos val="outEnd"/><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls>' +
+      '<c:cat><c:strRef><c:f>' + catRef + '</c:f><c:strCache><c:ptCount val="' + n + '"/>' + pts(ch.cats) + '</c:strCache></c:strRef></c:cat>' +
+      '<c:val><c:numRef><c:f>' + valRef + '</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="' + n + '"/>' + pts(ch.vals, true) + '</c:numCache></c:numRef></c:val></c:ser>' +
+      '<c:gapWidth val="70"/><c:axId val="5001"/><c:axId val="5002"/></c:barChart>' +
+      '<c:catAx><c:axId val="5001"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:numFmt formatCode="General" sourceLinked="0"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="BFBFBF"/></a:solidFill></a:ln></c:spPr>' + txt(1000, false) + '<c:crossAx val="5002"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/><c:noMultiLvlLbl val="0"/></c:catAx>' +
+      '<c:valAx><c:axId val="5002"/><c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln w="6350"><a:solidFill><a:srgbClr val="E1E6EC"/></a:solidFill></a:ln></c:spPr></c:majorGridlines>' +
+      (ch.unit ? '<c:title><c:tx><c:rich><a:bodyPr rot="-5400000" vert="horz"/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="900" b="0"/></a:pPr><a:r><a:rPr lang="es-HN" sz="900" b="0"/><a:t>' + xesc(ch.unit) + '</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title>' : '') +
+      '<c:numFmt formatCode="General" sourceLinked="1"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/><c:spPr><a:ln><a:noFill/></a:ln></c:spPr>' + txt(900, false, '595959') + '<c:crossAx val="5001"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>' +
+      '</c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:spPr><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln w="9525"><a:solidFill><a:srgbClr val="D6E0EB"/></a:solidFill></a:ln></c:spPr></c:chartSpace>';
+  }
+  var SHEET_D = 'Datos gráfico';
+  function addCharts(zip, charts, top, perRows) {
+    var rows = [], ct = [], rels = [], anchors = [], ref = "'" + SHEET_D + "'!";
+    var istr = function (ref1, t) { return '<c r="' + ref1 + '" t="inlineStr"><is><t xml:space="preserve">' + xesc(t) + '</t></is></c>'; };
+    var r = 1;
+    charts.forEach(function (ch, k) {
+      rows.push('<row r="' + r + '">' + istr('A' + r, ch.title) + istr('B' + r, ch.unit || '') + '</row>');
+      var a = r + 1;
+      ch.cats.forEach(function (c, i) { r++; rows.push('<row r="' + r + '">' + istr('A' + r, c) + '<c r="B' + r + '"><v>' + ch.vals[i] + '</v></c></row>'); });
+      var b = r; r += 2;
+      var id = k + 1;
+      zip.file('xl/charts/chart' + id + '.xml', chartXml(ch, ref + '$A$' + a + ':$A$' + b, ref + '$B$' + a + ':$B$' + b));
+      ct.push('<Override PartName="/xl/charts/chart' + id + '.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>');
+      rels.push('<Relationship Id="rIdC' + id + '" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart' + id + '.xml"/>');
+      var left = k % 2 === 0, row0 = top - 1 + Math.floor(k / 2) * perRows;
+      anchors.push('<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>' + (left ? 1 : 21) + '</xdr:col><xdr:colOff>60000</xdr:colOff><xdr:row>' + row0 + '</xdr:row><xdr:rowOff>50000</xdr:rowOff></xdr:from>' +
+        '<xdr:to><xdr:col>' + (left ? 20 : 40) + '</xdr:col><xdr:colOff>' + (left ? 120000 : 170000) + '</xdr:colOff><xdr:row>' + (row0 + perRows - 1) + '</xdr:row><xdr:rowOff>100000</xdr:rowOff></xdr:to>' +
+        '<xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="' + (100 + id) + '" name="Gráfico ' + id + '"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>' +
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rIdC' + id + '"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor>');
+    });
+    zip.file('xl/worksheets/sheet3.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetViews><sheetView workbookViewId="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="40" customWidth="1"/><col min="2" max="2" width="14" customWidth="1"/></cols><sheetData>' + rows.join('') + '</sheetData><pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>');
+    return Promise.all([zip.file('[Content_Types].xml').async('string'), zip.file('xl/_rels/workbook.xml.rels').async('string'), zip.file('xl/drawings/drawing1.xml').async('string'), zip.file('xl/drawings/_rels/drawing1.xml.rels').async('string')]).then(function (x) {
+      zip.file('[Content_Types].xml', x[0].replace('</Types>', '<Override PartName="/xl/worksheets/sheet3.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' + ct.join('') + '</Types>'));
+      zip.file('xl/_rels/workbook.xml.rels', x[1].replace('</Relationships>', '<Relationship Id="rIdGraf" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/></Relationships>'));
+      zip.file('xl/drawings/drawing1.xml', x[2].replace('</xdr:wsDr>', anchors.join('') + '</xdr:wsDr>'));
+      zip.file('xl/drawings/_rels/drawing1.xml.rels', x[3].replace('</Relationships>', rels.join('') + '</Relationships>'));
+    });
+  }
+
   function build(JSZip, rec, templateB64, asBuffer, opts) {
-    var d = rec || {}, photos = (opts && opts.photos) || [];
+    var d = rec || {}, photos = (opts && opts.photos) || [], charts = (opts && opts.charts) || [];
     return JSZip.loadAsync(templateB64, typeof templateB64 === 'string' ? { base64: true } : {}).then(function (zip) {
       return Promise.all([
         zip.file('xl/worksheets/sheet1.xml').async('string'),
@@ -364,14 +443,17 @@
       ]).then(function (x) {
         var S = parseSheet(x[0]), styles = new StyleBook(x[1]);
         var wb = { printEnd: 178 };
-        var W = fill(S, wb, styles, d);
+        var W = fill(S, wb, styles, d, charts);
         fitHeights(S, W.filled);
         zip.file('xl/worksheets/sheet1.xml', serializeSheet(S));
         var wbx = x[2].replace(/\$B\$2:\$AO\$\d+/, '$B$2:$AO$' + wb.printEnd);
         if (photos.length) wbx = wbx.replace('</sheets>', '<sheet name="Anexo fotográfico" sheetId="2" r:id="rIdFotos"/></sheets>');
+        if (charts.length) wbx = wbx.replace('</sheets>', '<sheet name="' + SHEET_D + '" sheetId="3" state="hidden" r:id="rIdGraf"/></sheets>');
         zip.file('xl/workbook.xml', wbx);
         zip.remove('xl/calcChain.xml');
-        return (photos.length ? addPhotoSheet(zip, styles, d, photos) : Promise.resolve()).then(function () {
+        return (charts.length ? addCharts(zip, charts, wb.chartTop, wb.chartRows) : Promise.resolve()).then(function () {
+          return photos.length ? addPhotoSheet(zip, styles, d, photos) : null;
+        }).then(function () {
           zip.file('xl/styles.xml', styles.toXml());
           return zip.generateAsync({ type: asBuffer ? 'nodebuffer' : 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression: 'DEFLATE' });
         });
