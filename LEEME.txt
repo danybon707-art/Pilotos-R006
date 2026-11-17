@@ -1,0 +1,67 @@
+APP DE CAMPO · REGISTRO DE PRUEBAS PILOTO (COR-GPPT-R006 V2)
+=============================================================
+
+Qué es
+------
+Una app web que se usa desde el celular, sin cuentas y sin señal.
+Registra el piloto por etapas (antes de la visita, en campo y cierre), toma fotos
+y genera el Excel V2 del formato, con una hoja extra de anexo fotográfico.
+Los datos quedan guardados en el celular de quien los llena.
+
+Probarla en la computadora (opcional)
+-------------------------------------
+Descomprima la carpeta y abra index.html con doble clic en Chrome.
+Funciona todo, salvo el modo sin señal y la instalación, que necesitan el paso siguiente.
+
+Publicarla para usarla en los celulares (una sola vez, unos 5 minutos)
+----------------------------------------------------------------------
+1. Cree una cuenta gratis en https://github.com (si no tiene una).
+2. Arriba a la derecha toque "+" > "New repository".
+   - Repository name: pilotos-r006
+   - Marque "Public" (GitHub Pages gratis lo requiere; ver la nota de abajo).
+   - Toque "Create repository".
+3. En el repositorio nuevo, toque "uploading an existing file"
+   (o "Add file" > "Upload files").
+   Arrastre TODOS los archivos de esta carpeta (no la carpeta en sí):
+   index.html, app.js, excel.js, plantilla.js, jszip.min.js, sw.js,
+   manifest.webmanifest, icon-192.png, icon-512.png.
+   Toque "Commit changes".
+4. Vaya a "Settings" > "Pages".
+   En "Build and deployment" > "Source" elija "Deploy from a branch".
+   En "Branch" elija "main" y "/ (root)" y toque "Save".
+5. Espere 1 o 2 minutos y recargue esa página: aparecerá el enlace, del tipo
+   https://SU-USUARIO.github.io/pilotos-r006/
+   Ese es el enlace que se comparte con el equipo.
+
+Instalarla en cada celular
+--------------------------
+1. Abra el enlace en Chrome, con señal, una vez.
+2. Toque el botón "Instalar en este celular" de la app, o el menú ⋮ de Chrome >
+   "Instalar app" / "Agregar a la pantalla principal".
+3. Queda un ícono como cualquier app. Desde ahí abre aunque no haya señal.
+
+Uso diario
+----------
+- Antes de la visita: datos generales, metodología y lo que se va a medir
+  (KPI con su meta y parámetros a controlar).
+- En campo: procedimiento, insumos, valores medidos, resultados, dificultades y fotos.
+  Use el micrófono del teclado para dictar.
+- Cierre: evaluación, seguimiento, cierre administrativo y validación.
+- "Revisar y generar Excel": muestra lo que falta del formato y genera el Excel
+  para compartir por WhatsApp, correo u OneDrive.
+- Para que otra persona continúe un piloto: menú ⋯ del piloto > "Compartir piloto".
+  Ella lo abre con "Abrir piloto recibido".
+
+Importante
+----------
+- Los datos viven en el celular. Si se borra la app o los datos de Chrome, se pierden.
+  Comparta el Excel o el piloto como respaldo.
+- Nota sobre "Public": lo público es el código de la app y la plantilla vacía del
+  formato (con sus logos). Los registros, datos y fotos NUNCA se suben a GitHub:
+  se quedan en cada celular.
+
+Publicar cambios a la app
+-------------------------
+Suba los archivos modificados al mismo repositorio (reemplazándolos) y, en sw.js,
+cambie VERSION (por ejemplo, de cor-campo-v1 a cor-campo-v2) para que los celulares
+descarguen la versión nueva la próxima vez que abran la app con señal.
