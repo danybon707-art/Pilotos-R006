@@ -143,6 +143,25 @@
     wb.printEnd = sh(wb.printEnd);
   }
 
+  /* Elimina las filas [a..b] y sube todo lo que está debajo. */
+  function deleteRows(S, wb, a, b) {
+    var n = b - a + 1, sh = function (r) { return r > b ? r - n : r; };
+    var newRows = {};
+    Object.keys(S.rows).forEach(function (k) { k = +k; if (k < a || k > b) newRows[sh(k)] = S.rows[k]; });
+    S.rows = newRows;
+    S.merges = S.merges.filter(function (m) { return m.r2 < a || m.r1 > b; });
+    S.merges.forEach(function (m) { m.r1 = sh(m.r1); m.r2 = sh(m.r2); });
+    S.tail = S.tail.replace(/sqref="([^"]+)"/g, function (_, rng) {
+      var parts = rng.split(' ').filter(function (part) {
+        var rs = part.match(/\d+/g).map(Number); return !(Math.min.apply(null, rs) >= a && Math.max.apply(null, rs) <= b);
+      }).map(function (part) { return part.replace(/([A-Z]+)(\d+)/g, function (__, c, r) { return c + sh(+r); }); });
+      return 'sqref="' + (parts.length ? parts.join(' ') : 'A1') + '"';
+    });
+    S.tail = S.tail.replace(/<brk id="(\d+)"/g, function (_, id) { id = +id; return '<brk id="' + (id >= a && id <= b ? a - 1 : sh(id)) + '"'; });
+    wb.printEnd = sh(wb.printEnd);
+    if (wb.chartTop) wb.chartTop = sh(wb.chartTop);
+  }
+
   /* ---------- Estilos: copia del estilo de la celda con ajuste de texto ---------- */
   function StyleBook(xml) {
     this.xml = xml; this.map = {};
@@ -266,11 +285,8 @@
       if (x.__na) { W.text('B' + r, 'No aplica'); return; }
       W.text('B' + r, x.recurso); W.text('N' + r, x.cantidad, 'center'); W.text('T' + r, x.unidad, 'center'); W.text('Y' + r, x.porcentaje, 'center'); W.text('AD' + r, x.obs);
     });
-    /* 5. Condiciones (5 filas: 80–84) */
-    dyn(80, 5, 1, naList(tableRows(d.s5)), function (r, x) {
-      if (x.__na) { W.text('B' + r, 'No aplica'); return; }
-      W.text('B' + r, x.aspecto); W.text('L' + r, x.parametro); W.text('X' + r, x.valor, 'center'); W.text('AE' + r, x.obs);
-    });
+    /* 5. Condiciones y parámetros: la app no la usa; sus filas (75–85) se eliminan del Excel al final */
+    wb.delFrom = R(75); wb.delTo = R(85);
     /* 6. KPI y resultados (6 bloques de 2 filas: 90–101) */
     dyn(90, 6, 2, naList(tableRows(d.s7)), function (r, x) {
       if (x.__na) { W.text('B' + r, 'No aplica'); return; }
@@ -445,6 +461,7 @@
         var wb = { printEnd: 178 };
         var W = fill(S, wb, styles, d, charts);
         fitHeights(S, W.filled);
+        if (wb.delFrom) deleteRows(S, wb, wb.delFrom, wb.delTo);
         zip.file('xl/worksheets/sheet1.xml', serializeSheet(S));
         var wbx = x[2].replace(/\$B\$2:\$AO\$\d+/, '$B$2:$AO$' + wb.printEnd);
         if (photos.length) wbx = wbx.replace('</sheets>', '<sheet name="Anexo fotográfico" sheetId="2" r:id="rIdFotos"/></sheets>');

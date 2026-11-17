@@ -51,21 +51,21 @@ var PHASES = {
   antes: { name: 'Antes de la visita', icon: '📋', desc: 'Datos generales, metodología y qué se va a medir', views: [
     { s: 's1', t: '1 · Datos generales' },
     { s: 's2', t: '2 · Metodología de evaluación', note: 'Defina cómo se comprobará el desempeño de la prueba y cuál será el punto de comparación.' },
-    { s: 's7', m: 'plan', t: '6 · KPI y resultados: qué se va a medir', note: 'Liste los KPI o resultados con su meta. En campo solo se anotará el resultado obtenido.' }
+    { s: 's7', m: 'plan', t: '5 · KPI y resultados: qué se va a medir', note: 'Liste los KPI o resultados con su meta. En campo solo se anotará el resultado obtenido.' }
   ]},
   campo: { name: 'En campo', icon: '🏭', desc: 'Procedimiento, insumos, mediciones, resultados, dificultades y fotos', views: [
     { s: 's3', t: '3 · Procedimiento realizado', note: 'Etapas principales en el orden en que se ejecutaron.' },
     { s: 's4', t: '4 · Recursos e insumos', note: 'Materias primas, materiales, reactivos, equipos, servicios. Si hay formulación, inclúyala aquí.' },
-    { s: 's7', m: 'campo', t: '6 · KPI y resultados obtenidos', note: 'Anote el resultado de cada KPI (con unidad) y marque si cumple la meta.' },
-    { s: 's8', t: '7 · Riesgos, dificultades y mejoras' },
+    { s: 's7', m: 'campo', t: '5 · KPI y resultados obtenidos', note: 'Anote el resultado de cada KPI (con unidad) y marque si cumple la meta.' },
+    { s: 's8', t: '6 · Riesgos, dificultades y mejoras' },
     { s: 'fotos', t: 'Fotos de la visita', note: 'Displays, hojas de laboratorio, bitácora, equipo. Se agregan solas como anexos y en una hoja del Excel.' }
   ]},
   cierre: { name: 'Cierre', icon: '✅', desc: 'Evaluación, seguimiento, cierre, validación y anexos', views: [
-    { s: 's9', t: '8 · Evaluación de la prueba piloto', note: 'Marque una opción por criterio y complemente la conclusión con la evidencia disponible.' },
-    { s: 's10', t: '9 · Seguimiento de implementación', note: 'Solo si la prueba es favorable y se autoriza avanzar.' },
-    { s: 's11', t: '10 · Cierre administrativo y contable', note: 'Referencias de cierre según los controles internos.' },
-    { s: 's12', t: '11 · Validación del registro', note: 'La firma se estampa en el documento impreso.' },
-    { s: 's13', t: '12 · Anexos y evidencias', note: 'Hojas de datos, resultados de laboratorio, gráficos, cálculos, cotizaciones, bitácoras. Las fotos de la app se agregan solas.' }
+    { s: 's9', t: '7 · Evaluación de la prueba piloto', note: 'Marque una opción por criterio y complemente la conclusión con la evidencia disponible.' },
+    { s: 's10', t: '8 · Seguimiento de implementación', note: 'Solo si la prueba es favorable y se autoriza avanzar.' },
+    { s: 's11', t: '9 · Cierre administrativo y contable', note: 'Referencias de cierre según los controles internos.' },
+    { s: 's12', t: '10 · Validación del registro', note: 'La firma se estampa en el documento impreso.' },
+    { s: 's13', t: '11 · Anexos y evidencias', note: 'Hojas de datos, resultados de laboratorio, gráficos, cálculos, cotizaciones, bitácoras. Las fotos de la app se agregan solas.' }
   ]}
 };
 var PH_ORDER = ['antes', 'campo', 'cierre'];
@@ -618,14 +618,14 @@ function s9View(p, E) {
   var g = p.gate || '', ag = !g ? E.gate : '';
   var gcls = function (v, c) { return g === v ? 'sel ' + c : ag === v ? 'sel auto ' + c : ''; };
   h += '<div class="gate"><b>¿La prueba es favorable y se autoriza avanzar hacia la implementación?</b>' +
-    '<div class="seg"><button class="' + gcls('favorable', 'si') + '" data-gate="favorable">Sí → se llena la secc. 9</button><button class="' + gcls('no', 'no') + '" data-gate="no">No → secc. 9 "No aplica"</button></div>' +
+    '<div class="seg"><button class="' + gcls('favorable', 'si') + '" data-gate="favorable">Sí → se llena la secc. 8</button><button class="' + gcls('no', 'no') + '" data-gate="no">No → secc. 8 "No aplica"</button></div>' +
     (ag ? '<div class="autonote">⚙️ Sugerido según el cumplimiento de los KPI. Tóquelo para confirmarlo o elija la otra opción.</div>' : '') + '</div>';
   CRIT9.forEach(function (q, i) {
     h += '<div class="crit"><div class="q">' + esc(q) + '</div>' + seg('s9.crit.' + i, CRIT_OPTS, (sd.crit || [])[i], false, ec[i], 'Sugerido según el cumplimiento de los KPI') + '</div>';
   });
   h += '<div class="banner info">✨ La comparación y la conclusión se redactan solas con los datos registrados. Toque <b>Redactar</b> para verlas y ajustarlas. Si las deja vacías, se redactan al generar el Excel.</div>';
   h += '<div class="f"><label>Comparación entre la línea base y los resultados obtenidos</label><div class="prompt">Se arma con la línea base, los KPI (meta, resultado, cumplimiento). Si hay gráficos comparativos, en el Excel este apartado muestra solo los gráficos; este texto se usa cuando no hay gráficos.</div>' + inputHtml('s9.grafico', sd.grafico, { type: 'area', rows: 6 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="grafico">✨ Redactar</button></div></div>';
-  h += '<div class="f"><label>Conclusión y recomendación</label><div class="prompt">Se arma con los criterios, los KPI, las dificultades y mejoras de la secc. 7 y la decisión.</div>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 7 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="conclusion">✨ Redactar</button></div></div>';
+  h += '<div class="f"><label>Conclusión y recomendación</label><div class="prompt">Se arma con los criterios, los KPI, las dificultades y mejoras de la secc. 6 y la decisión.</div>' + inputHtml('s9.conclusion', sd.conclusion, { type: 'area', rows: 7 }) + '<div style="margin-top:8px"><button class="btn sm sky" data-auto="conclusion">✨ Redactar</button></div></div>';
   return h;
 }
 function s12View(p, E) {
@@ -658,8 +658,8 @@ function renderView(p, ph, i) {
   if (s === 's1') { var sd1 = d.s1 = d.s1 || {}; F1.forEach(function (f) { h += fieldBlock('s1', f, sd1, E); }); }
   else if (s === 's2') { var sd2 = d.s2 = d.s2 || {}; F2.forEach(function (f) { h += fieldBlock('s2', f, sd2); }); }
   else if (s === 's10') {
-    if (E.gate === 'no') h += '<div class="banner info">' + (p.gate ? 'En la evaluación (secc. 8) se indicó' : 'Según los KPI registrados (ninguno cumple la meta), se considera') + ' que la prueba <b>no es favorable</b>. Esta sección aparecerá como "No aplica" en el Excel.</div>';
-    else { if (!E.gate) h += '<div class="banner warn">Primero responda en la secc. 8 si la prueba es favorable.</div>'; var sd10 = d.s10 = d.s10 || {}; F10.forEach(function (f) { h += fieldBlock('s10', f, sd10, E); }); }
+    if (E.gate === 'no') h += '<div class="banner info">' + (p.gate ? 'En la evaluación (secc. 7) se indicó' : 'Según los KPI registrados (ninguno cumple la meta), se considera') + ' que la prueba <b>no es favorable</b>. Esta sección aparecerá como "No aplica" en el Excel.</div>';
+    else { if (!E.gate) h += '<div class="banner warn">Primero responda en la secc. 7 si la prueba es favorable.</div>'; var sd10 = d.s10 = d.s10 || {}; F10.forEach(function (f) { h += fieldBlock('s10', f, sd10, E); }); }
   }
   else if (s === 's11') { var sd11 = d.s11 = d.s11 || {}; F11.forEach(function (f) { h += fieldBlock('s11', f, sd11); }); }
   else if (s === 'med') {
@@ -699,7 +699,7 @@ function renderReview(p) {
   }
   var nf = (p.fotos || []).length;
   var chs = chartData(eff(p));
-  h += '<div class="card"><label style="display:flex;gap:10px;align-items:center;font-size:15px;margin-bottom:10px"><input type="checkbox" id="incGraf" style="width:22px;height:22px"' + (chs.length ? ' checked' : ' disabled') + '> Incluir gráficos comparativos en la secc. 8 (' + chs.length + ' KPI)</label>' +
+  h += '<div class="card"><label style="display:flex;gap:10px;align-items:center;font-size:15px;margin-bottom:10px"><input type="checkbox" id="incGraf" style="width:22px;height:22px"' + (chs.length ? ' checked' : ' disabled') + '> Incluir gráficos comparativos en la secc. 7 (' + chs.length + ' KPI)</label>' +
     '<label style="display:flex;gap:10px;align-items:center;font-size:15px"><input type="checkbox" id="incFotos" style="width:22px;height:22px"' + (nf ? ' checked' : ' disabled') + '> Incluir hoja "Anexo fotográfico" (' + nf + ' foto' + (nf === 1 ? '' : 's') + ')</label>' +
     (chs.length ? '<div class="sub" style="margin-top:14px">Vista previa de los gráficos</div>' + chs.map(chartSvg).join('') :
       '<p class="muted" style="margin:10px 0 0">Para tener gráficos, cada KPI necesita un resultado con número y una meta o línea base con número.</p>') + '</div>';
